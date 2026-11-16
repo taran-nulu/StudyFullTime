@@ -88,6 +88,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         spentItem.isEnabled = false
         menu.addItem(spentItem)
 
+        menu.addItem(.separator())
+
         zeroCountItem.isEnabled = false
         menu.addItem(zeroCountItem)
 
