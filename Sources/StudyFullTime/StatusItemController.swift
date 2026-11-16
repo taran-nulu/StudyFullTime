@@ -14,6 +14,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     private var ticker: Timer?
     private var lastTitle = ""
+    private var lastSymbolName: String?
     private var lastPersistDate = Date.distantPast
 
     init(timer: DailyTimer, store: TimerStateStore) {
@@ -51,15 +52,30 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     private func configureStatusItem() {
         if let button = statusItem.button {
-            let image = NSImage(systemSymbolName: "hourglass",
-                                accessibilityDescription: "Study time remaining")
-            image?.isTemplate = true
-            button.image = image
             button.imagePosition = .imageLeading
             button.toolTip = "Study time remaining today"
             button.attributedTitle = attributedTitle(for: timer.displayText)
         }
+        updateStatusImageIfNeeded()
         statusItem.menu = menu
+    }
+
+    /// Shows an hourglass while the timer is running and a sleeping moon while
+    /// it is paused. The image is only replaced when the state changes.
+    private func updateStatusImageIfNeeded() {
+        let symbolName = timer.isRunning ? "hourglass" : "moon.zzz"
+        guard symbolName != lastSymbolName else { return }
+        lastSymbolName = symbolName
+
+        let description = timer.isRunning
+            ? "Study timer running"
+            : "Study timer paused"
+        let image = NSImage(systemSymbolName: symbolName,
+                            accessibilityDescription: description)
+            ?? NSImage(systemSymbolName: "hourglass",
+                       accessibilityDescription: description)
+        image?.isTemplate = true
+        statusItem.button?.image = image
     }
 
     private func configureMenu() {
@@ -123,6 +139,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     private func refresh() {
+        updateStatusImageIfNeeded()
+
         let title = timer.displayText
         if title != lastTitle {
             lastTitle = title
