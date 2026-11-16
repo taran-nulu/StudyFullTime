@@ -8,6 +8,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let menu = NSMenu()
     private let headerItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let toggleItem = NSMenuItem(title: "Pause", action: nil, keyEquivalent: "")
+    private let subtractItem = NSMenuItem(title: "Subtract Minutes...", action: nil, keyEquivalent: "")
     private let resetItem = NSMenuItem(title: "Reset Today's Timer", action: nil, keyEquivalent: "")
 
     private var ticker: Timer?
@@ -69,6 +70,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         toggleItem.action = #selector(toggleTimer)
         menu.addItem(toggleItem)
 
+        subtractItem.target = self
+        subtractItem.action = #selector(subtractMinutes)
+        menu.addItem(subtractItem)
+
         resetItem.target = self
         resetItem.action = #selector(resetTimer)
         menu.addItem(resetItem)
@@ -125,6 +130,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         toggleItem.title = timer.isRunning ? "Pause" : "Resume"
         toggleItem.isEnabled = !timer.isFinished
+        subtractItem.isEnabled = !timer.isFinished
     }
 
     private func attributedTitle(for text: String) -> NSAttributedString {
@@ -143,6 +149,34 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func resetTimer() {
         timer.reset(now: Date())
+        persist()
+        refresh()
+    }
+
+    @objc private func subtractMinutes() {
+        NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.messageText = "Subtract Minutes"
+        alert.informativeText = "Enter how many minutes to subtract from today's remaining time."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Subtract")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = "Minutes"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let minutes = Int(text), minutes > 0 else {
+            NSSound.beep()
+            return
+        }
+
+        timer.subtract(minutes: minutes, now: Date())
         persist()
         refresh()
     }

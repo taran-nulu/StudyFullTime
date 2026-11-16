@@ -136,6 +136,19 @@ public struct DailyTimer {
         lastTick = now
     }
 
+    /// Marks the given number of minutes as already used. The total is capped
+    /// at the daily budget, and a running timer stops once the budget is spent.
+    public mutating func subtract(minutes: Int, now: Date) {
+        guard minutes > 0 else { return }
+
+        counted = min(DailyTimer.dailyBudget,
+                      counted + TimeInterval(minutes) * 60)
+        if counted >= DailyTimer.dailyBudget {
+            isRunning = false
+        }
+        lastTick = now
+    }
+
     /// Re-anchors the tick clock without counting the elapsed gap. Used after
     /// wake-from-sleep and day-change notifications.
     public mutating func synchronize(now: Date, calendar: Calendar = .current) {

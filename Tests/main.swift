@@ -177,6 +177,53 @@ private func testManualResetRefillsAndPauses() {
     checkEqual(timer.displayText, "480m", "reset display")
 }
 
+private func testSubtractMinutesMarksTimeAsUsed() {
+    let now = date(2026, 1, 15, 9, 0)
+    var timer = DailyTimer(snapshot: nil, now: now, calendar: calendar)
+
+    timer.subtract(minutes: 30, now: now)
+
+    checkEqual(timer.counted, 1800, accuracy: 0.001, "subtracted counted")
+    checkEqual(timer.displayText, "450m", "subtracted display")
+    check(!timer.isRunning, "subtracting must not start a paused timer")
+}
+
+private func testSubtractWhileRunningKeepsRunning() {
+    let now = date(2026, 1, 15, 9, 0)
+    var timer = DailyTimer(snapshot: nil, now: now, calendar: calendar)
+
+    timer.setRunning(true, now: now)
+    timer.subtract(minutes: 5, now: now)
+    check(timer.isRunning, "subtracting should not pause a running timer")
+
+    timer.tick(now: now.addingTimeInterval(1), calendar: calendar)
+    checkEqual(timer.counted, 301, accuracy: 0.001, "counted after subtraction")
+}
+
+private func testSubtractingMoreThanRemainingFinishesAndStops() {
+    let now = date(2026, 1, 15, 9, 0)
+    let almostDone = snapshot(counted: 28799, running: true, on: now)
+    var timer = DailyTimer(snapshot: almostDone, now: now, calendar: calendar)
+
+    timer.subtract(minutes: 5, now: now)
+
+    checkEqual(timer.counted, 28800, accuracy: 0.001, "clamped subtracted counted")
+    checkEqual(timer.displayText, "0m", "clamped subtracted display")
+    check(timer.isFinished, "subtracting past the budget should finish the day")
+    check(!timer.isRunning, "finished timer should stop after subtracting")
+}
+
+private func testNonPositiveSubtractIsIgnored() {
+    let now = date(2026, 1, 15, 9, 0)
+    var timer = DailyTimer(snapshot: nil, now: now, calendar: calendar)
+
+    timer.subtract(minutes: 0, now: now)
+    timer.subtract(minutes: -25, now: now)
+
+    checkEqual(timer.counted, 0, accuracy: 0.001, "ignored subtraction")
+    checkEqual(timer.displayText, "480m", "ignored subtraction display")
+}
+
 private func testMidnightRolloverRefillsAndPauses() {
     let dayOne = date(2026, 1, 15, 23, 0)
     let saved = snapshot(counted: 120, running: true, on: dayOne)
@@ -235,6 +282,10 @@ testLongGapIsClampedInsteadOfConsumingTheBudget()
 testSynchronizeAnchorsClockWithoutCountingGap()
 testTimerStopsAtZeroAndCannotResume()
 testManualResetRefillsAndPauses()
+testSubtractMinutesMarksTimeAsUsed()
+testSubtractWhileRunningKeepsRunning()
+testSubtractingMoreThanRemainingFinishesAndStops()
+testNonPositiveSubtractIsIgnored()
 testMidnightRolloverRefillsAndPauses()
 testMinutesRoundUpAndCollapseAtZero()
 testDisplayTextUsesMinutesOnly()
