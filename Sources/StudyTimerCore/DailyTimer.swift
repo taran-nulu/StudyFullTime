@@ -13,23 +13,40 @@ public struct TimerSnapshot: Codable, Equatable {
     /// Whether the timer was counting down when the snapshot was taken.
     public var isRunning: Bool
 
+    /// Total number of times the countdown has crossed zero.
+    public var timesReachedZero: Int
+    /// Consecutive days on which zero has been reached.
+    public var currentStreak: Int
+    /// Longest consecutive-day streak ever recorded.
+    public var longestStreak: Int
+    /// Most recent day on which zero was reached, formatted `yyyy-MM-dd`.
+    public var lastZeroDayKey: String?
+
     public init(dayKey: String,
                 counted: TimeInterval,
                 spent: TimeInterval? = nil,
-                isRunning: Bool) {
+                isRunning: Bool,
+                timesReachedZero: Int = 0,
+                currentStreak: Int = 0,
+                longestStreak: Int = 0,
+                lastZeroDayKey: String? = nil) {
         self.dayKey = dayKey
         self.counted = counted
         self.spent = spent ?? max(0, counted)
         self.isRunning = isRunning
+        self.timesReachedZero = timesReachedZero
+        self.currentStreak = currentStreak
+        self.longestStreak = longestStreak
+        self.lastZeroDayKey = lastZeroDayKey
     }
 
     private enum CodingKeys: String, CodingKey {
         case version, dayKey, counted, spent, isRunning
+        case timesReachedZero, currentStreak, longestStreak, lastZeroDayKey
     }
 
-    /// Version 3 stores `spent` independently of `counted`. Older snapshots
-    /// had no additions, so their counted time is also their spent time.
-    private static let currentSchemaVersion = 3
+    /// Version 4 adds the zero-reached and streak statistics.
+    private static let currentSchemaVersion = 4
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -39,7 +56,7 @@ public struct TimerSnapshot: Codable, Equatable {
 
         dayKey = try container.decode(String.self, forKey: .dayKey)
         counted = decodedCounted
-        if version >= TimerSnapshot.currentSchemaVersion {
+        if version >= 3 {
             spent = max(0, decodedSpent ?? decodedCounted)
         } else {
             // Older formats did not support additions and counted subtractions
@@ -47,6 +64,13 @@ public struct TimerSnapshot: Codable, Equatable {
             spent = max(0, decodedCounted)
         }
         isRunning = try container.decode(Bool.self, forKey: .isRunning)
+        timesReachedZero = max(0, try container.decodeIfPresent(Int.self,
+                                                               forKey: .timesReachedZero) ?? 0)
+        currentStreak = max(0, try container.decodeIfPresent(Int.self,
+                                                            forKey: .currentStreak) ?? 0)
+        longestStreak = max(0, try container.decodeIfPresent(Int.self,
+                                                            forKey: .longestStreak) ?? 0)
+        lastZeroDayKey = try container.decodeIfPresent(String.self, forKey: .lastZeroDayKey)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -56,6 +80,10 @@ public struct TimerSnapshot: Codable, Equatable {
         try container.encode(counted, forKey: .counted)
         try container.encode(spent, forKey: .spent)
         try container.encode(isRunning, forKey: .isRunning)
+        try container.encode(timesReachedZero, forKey: .timesReachedZero)
+        try container.encode(currentStreak, forKey: .currentStreak)
+        try container.encode(longestStreak, forKey: .longestStreak)
+        try container.encodeIfPresent(lastZeroDayKey, forKey: .lastZeroDayKey)
     }
 }
 
@@ -78,6 +106,13 @@ public struct DailyTimer {
     public private(set) var spent: TimeInterval
     public private(set) var isRunning: Bool
     public private(set) var dayKey: String
+    /// Total number of times the countdown has crossed zero.
+    public private(set) var timesReachedZero: Int
+    /// Consecutive days on which zero has been reached.
+    public private(set) var currentStreak: Int
+    /// Longest consecutive-day streak ever recorded.
+    public private(set) var longestStreak: Int
+    private var lastZeroDayKey: String?
     private var lastTick: Date
 
     public init(snapshot: TimerSnapshot?, now: Date, calendar: Calendar = .current) {
@@ -85,16 +120,25 @@ public struct DailyTimer {
         self.dayKey = key
         self.lastTick = now
 
+        let restoredCurrentStreak = max(snapshot?.currentStreak ?? 0, 0)
+        self.timesReachedZero = max(snapshot?.timesReachedZero ?? 0, 0)
+        self.currentStreak = restoredCurrentStreak
+        self.longestStreak = max(snapshot?.longestStreak ?? 0, restoredCurrentStreak)
+        self.lastZeroDayKey = snapshot?.lastZeroDayKey
+
         if let snapshot = snapshot, snapshot.dayKey == key {
             self.counted = snapshot.counted
             self.spent = max(snapshot.spent, 0)
             self.isRunning = snapshot.isRunning
         } else {
             // First launch of the day, or the saved state is from another day.
+            // All-time statistics still carry over.
             self.counted = 0
             self.spent = 0
             self.isRunning = false
         }
+
+        expireStreakIfNeeded(now: now, calendar: calendar)
     }
 
     /// Seconds left in today's budget. Negative once the timer has overrun.
@@ -160,8 +204,13 @@ public struct DailyTimer {
         guard delta > 0 else { return }
 
         let gap = min(delta, DailyTimer.maximumTickGap)
+        let wasAboveZero = remaining > 0
         counted += gap
         spent += gap
+
+        if wasAboveZero && remaining <= 0 {
+            recordZeroReached(now: now, calendar: calendar)
+        }
     }
 
     /// Starts a fresh day if `now` falls on a different calendar day.
@@ -176,6 +225,7 @@ public struct DailyTimer {
         spent = 0
         isRunning = false
         lastTick = now
+        expireStreakIfNeeded(now: now, calendar: calendar)
         return true
     }
 
@@ -209,13 +259,20 @@ public struct DailyTimer {
 
     /// Marks the given number of minutes as already used. This can push the
     /// remaining time below zero and never changes the running state.
-    public mutating func subtract(minutes: Int, now: Date) {
+    public mutating func subtract(minutes: Int,
+                                  now: Date,
+                                  calendar: Calendar = .current) {
         guard minutes > 0 else { return }
 
+        let wasAboveZero = remaining > 0
         let amount = TimeInterval(minutes) * 60
         counted += amount
         spent += amount
         lastTick = now
+
+        if wasAboveZero && remaining <= 0 {
+            recordZeroReached(now: now, calendar: calendar)
+        }
     }
 
     /// Re-anchors the tick clock without counting the elapsed gap. Used after
@@ -226,6 +283,51 @@ public struct DailyTimer {
     }
 
     public func snapshot() -> TimerSnapshot {
-        TimerSnapshot(dayKey: dayKey, counted: counted, spent: spent, isRunning: isRunning)
+        TimerSnapshot(dayKey: dayKey,
+                      counted: counted,
+                      spent: spent,
+                      isRunning: isRunning,
+                      timesReachedZero: timesReachedZero,
+                      currentStreak: currentStreak,
+                      longestStreak: longestStreak,
+                      lastZeroDayKey: lastZeroDayKey)
+    }
+
+    // MARK: - Statistics
+
+    private mutating func recordZeroReached(now: Date, calendar: Calendar) {
+        timesReachedZero += 1
+
+        let today = DailyTimer.dayKey(for: now, calendar: calendar)
+        guard lastZeroDayKey != today else { return }
+
+        let yesterdayDate = calendar.date(byAdding: .day, value: -1, to: now) ?? now
+        let yesterday = DailyTimer.dayKey(for: yesterdayDate, calendar: calendar)
+
+        if lastZeroDayKey == yesterday {
+            currentStreak += 1
+        } else {
+            currentStreak = 1
+        }
+        lastZeroDayKey = today
+        longestStreak = max(longestStreak, currentStreak)
+    }
+
+    /// A streak stays alive through the day after its last zero. If neither
+    /// today nor yesterday recorded a zero, it is no longer current.
+    private mutating func expireStreakIfNeeded(now: Date, calendar: Calendar) {
+        guard currentStreak > 0 else { return }
+        guard let lastZeroDayKey = lastZeroDayKey else {
+            currentStreak = 0
+            return
+        }
+
+        let today = DailyTimer.dayKey(for: now, calendar: calendar)
+        let yesterdayDate = calendar.date(byAdding: .day, value: -1, to: now) ?? now
+        let yesterday = DailyTimer.dayKey(for: yesterdayDate, calendar: calendar)
+
+        if lastZeroDayKey != today && lastZeroDayKey != yesterday {
+            currentStreak = 0
+        }
     }
 }

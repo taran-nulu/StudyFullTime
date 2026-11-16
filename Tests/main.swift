@@ -60,6 +60,19 @@ private func snapshot(counted: TimeInterval, running: Bool, on date: Date) -> Ti
                   isRunning: running)
 }
 
+/// Builds a snapshot for `day` that is one second away from reaching zero and
+/// carries the statistics from an earlier snapshot.
+private func zeroCrossingSnapshot(on day: Date, carrying from: TimerSnapshot) -> TimerSnapshot {
+    TimerSnapshot(dayKey: DailyTimer.dayKey(for: day, calendar: calendar),
+                  counted: 28799,
+                  spent: 28799,
+                  isRunning: true,
+                  timesReachedZero: from.timesReachedZero,
+                  currentStreak: from.currentStreak,
+                  longestStreak: from.longestStreak,
+                  lastZeroDayKey: from.lastZeroDayKey)
+}
+
 // MARK: - Tests
 
 private func testFreshDayStartsFullAndPaused() {
@@ -425,6 +438,107 @@ private func testVersionedSnapshotPreservesIndependentSpent() {
     check(decoded.isRunning, "versioned running flag")
 }
 
+private func testReachingZeroRecordsCountAndStartsStreak() {
+    let now = date(2026, 1, 15, 9, 0)
+    let almostDone = snapshot(counted: 28799, running: true, on: now)
+    var timer = DailyTimer(snapshot: almostDone, now: now, calendar: calendar)
+
+    timer.tick(now: now.addingTimeInterval(1), calendar: calendar)
+
+    checkEqual(timer.timesReachedZero, 1, "zero count after crossing")
+    checkEqual(timer.currentStreak, 1, "current streak after first zero")
+    checkEqual(timer.longestStreak, 1, "longest streak after first zero")
+    checkEqual(timer.snapshot().lastZeroDayKey, "2026-01-15", "last zero day")
+}
+
+private func testRepeatedZeroSameDayDoesNotExtendStreak() {
+    let now = date(2026, 1, 15, 9, 0)
+    var timer = DailyTimer(snapshot: nil, now: now, calendar: calendar)
+
+    timer.subtract(minutes: 480, now: now, calendar: calendar)
+    checkEqual(timer.timesReachedZero, 1, "first zero count")
+    checkEqual(timer.currentStreak, 1, "first zero streak")
+
+    timer.add(minutes: 60, now: now)
+    timer.subtract(minutes: 60, now: now, calendar: calendar)
+
+    checkEqual(timer.timesReachedZero, 2, "second zero count")
+    checkEqual(timer.currentStreak, 1, "same-day zero does not extend streak")
+    checkEqual(timer.longestStreak, 1, "same-day zero does not extend longest")
+}
+
+private func testConsecutiveDaysExtendStreak() {
+    let day1 = date(2026, 1, 15, 9, 0)
+    var first = DailyTimer(snapshot: snapshot(counted: 28799, running: true, on: day1),
+                           now: day1, calendar: calendar)
+    first.tick(now: day1.addingTimeInterval(1), calendar: calendar)
+    checkEqual(first.currentStreak, 1, "day 1 streak")
+
+    let day2 = date(2026, 1, 16, 9, 0)
+    var second = DailyTimer(snapshot: zeroCrossingSnapshot(on: day2, carrying: first.snapshot()),
+                            now: day2, calendar: calendar)
+    second.tick(now: day2.addingTimeInterval(1), calendar: calendar)
+
+    checkEqual(second.timesReachedZero, 2, "zero count across two days")
+    checkEqual(second.currentStreak, 2, "consecutive-day streak")
+    checkEqual(second.longestStreak, 2, "longest consecutive streak")
+}
+
+private func testSkippedDayResetsCurrentStreakButKeepsLongest() {
+    let day1 = date(2026, 1, 15, 9, 0)
+    var first = DailyTimer(snapshot: snapshot(counted: 28799, running: true, on: day1),
+                           now: day1, calendar: calendar)
+    first.tick(now: day1.addingTimeInterval(1), calendar: calendar)
+
+    let day2 = date(2026, 1, 16, 9, 0)
+    var second = DailyTimer(snapshot: zeroCrossingSnapshot(on: day2, carrying: first.snapshot()),
+                            now: day2, calendar: calendar)
+    second.tick(now: day2.addingTimeInterval(1), calendar: calendar)
+    checkEqual(second.longestStreak, 2, "two-day longest before skip")
+
+    let day4 = date(2026, 1, 18, 9, 0)
+    var fourth = DailyTimer(snapshot: zeroCrossingSnapshot(on: day4, carrying: second.snapshot()),
+                            now: day4, calendar: calendar)
+    checkEqual(fourth.currentStreak, 0, "skipped day clears current streak")
+    checkEqual(fourth.longestStreak, 2, "skipped day keeps longest streak")
+
+    fourth.tick(now: day4.addingTimeInterval(1), calendar: calendar)
+    checkEqual(fourth.currentStreak, 1, "new streak after skipped day")
+    checkEqual(fourth.longestStreak, 2, "new streak cannot beat longest")
+    checkEqual(fourth.timesReachedZero, 3, "zero count keeps accumulating")
+}
+
+private func testSnapshotRoundTripPreservesStatistics() {
+    let original = TimerSnapshot(dayKey: "2026-01-15",
+                                 counted: 120,
+                                 spent: 120,
+                                 isRunning: false,
+                                 timesReachedZero: 7,
+                                 currentStreak: 3,
+                                 longestStreak: 5,
+                                 lastZeroDayKey: "2026-01-15")
+    let data = try! JSONEncoder().encode(original)
+    let decoded = try! JSONDecoder().decode(TimerSnapshot.self, from: data)
+
+    checkEqual(decoded.timesReachedZero, 7, "round trip zero count")
+    checkEqual(decoded.currentStreak, 3, "round trip current streak")
+    checkEqual(decoded.longestStreak, 5, "round trip longest streak")
+    checkEqual(decoded.lastZeroDayKey, "2026-01-15", "round trip last zero day")
+}
+
+private func testOlderSnapshotsDefaultStatisticsToZero() {
+    let json = """
+    {"version":3,"dayKey":"2026-01-15","counted":120,"spent":120,"isRunning":false}
+    """.data(using: .utf8)!
+
+    let decoded = try! JSONDecoder().decode(TimerSnapshot.self, from: json)
+
+    checkEqual(decoded.timesReachedZero, 0, "migrated zero count")
+    checkEqual(decoded.currentStreak, 0, "migrated current streak")
+    checkEqual(decoded.longestStreak, 0, "migrated longest streak")
+    check(decoded.lastZeroDayKey == nil, "migrated last zero day")
+}
+
 private func testMinutesRoundUpAndCollapseAtZero() {
     checkEqual(DailyTimer.minutes(from: 28800), 480, "28800s")
     checkEqual(DailyTimer.minutes(from: 28799), 480, "28799s")
@@ -458,7 +572,9 @@ private func testStoreRoundTrip() {
     let store = UserDefaultsTimerStore(defaults: defaults, key: "snapshot")
     check(store.load() == nil, "empty store should load nil")
 
-    let saved = TimerSnapshot(dayKey: "2026-01-15", counted: 30000, isRunning: true)
+    let saved = TimerSnapshot(dayKey: "2026-01-15", counted: 30000, isRunning: true,
+                              timesReachedZero: 2, currentStreak: 2,
+                              longestStreak: 2, lastZeroDayKey: "2026-01-15")
     store.save(saved)
 
     checkEqual(store.load(), saved, "store round trip")
@@ -492,6 +608,12 @@ testSpentMinutesRoundDown()
 testLegacySnapshotWithoutSpentKeyStillLoads()
 testSnapshotWithOldSpentFieldShowsCountedMinutes()
 testVersionedSnapshotPreservesIndependentSpent()
+testReachingZeroRecordsCountAndStartsStreak()
+testRepeatedZeroSameDayDoesNotExtendStreak()
+testConsecutiveDaysExtendStreak()
+testSkippedDayResetsCurrentStreakButKeepsLongest()
+testSnapshotRoundTripPreservesStatistics()
+testOlderSnapshotsDefaultStatisticsToZero()
 testMinutesRoundUpAndCollapseAtZero()
 testDisplayTextUsesMinutesOnly()
 testStoreRoundTrip()

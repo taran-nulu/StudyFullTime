@@ -8,6 +8,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let menu = NSMenu()
     private let headerItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let spentItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let zeroCountItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let streakItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let toggleItem = NSMenuItem(title: "Pause", action: nil, keyEquivalent: "")
     private let addItem = NSMenuItem(title: "Add Minutes...", action: nil, keyEquivalent: "")
     private let subtractItem = NSMenuItem(title: "Subtract Minutes...", action: nil, keyEquivalent: "")
@@ -86,6 +88,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         spentItem.isEnabled = false
         menu.addItem(spentItem)
 
+        zeroCountItem.isEnabled = false
+        menu.addItem(zeroCountItem)
+
+        streakItem.isEnabled = false
+        menu.addItem(streakItem)
+
         menu.addItem(.separator())
 
         toggleItem.target = self
@@ -144,10 +152,17 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     private func handleTick() {
         let now = Date()
+        let previousZeroCount = timer.timesReachedZero
+        let previousDayKey = timer.dayKey
+
         timer.tick(now: now)
         refresh()
 
-        if now.timeIntervalSince(lastPersistDate) >= 10 {
+        // Zero crossings and day rollovers must be saved immediately so a
+        // streak is not lost if the app quits before the next periodic save.
+        let statsChanged = timer.timesReachedZero != previousZeroCount
+        let dayChanged = timer.dayKey != previousDayKey
+        if statsChanged || dayChanged || now.timeIntervalSince(lastPersistDate) >= 10 {
             persist()
         }
     }
@@ -170,8 +185,15 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             headerItem.title = "Time's up for today"
         }
         spentItem.title = "Time spent today: \(timer.spentMinutes) min"
+        zeroCountItem.title = "Times completed: \(timer.timesReachedZero)"
+        streakItem.title = "Streak: \(dayCount(timer.currentStreak))"
+            + " · Longest: \(dayCount(timer.longestStreak))"
 
         toggleItem.title = timer.isRunning ? "Pause" : "Resume"
+    }
+
+    private func dayCount(_ count: Int) -> String {
+        "\(count) \(count == 1 ? "day" : "days")"
     }
 
     private func attributedTitle(for text: String) -> NSAttributedString {
