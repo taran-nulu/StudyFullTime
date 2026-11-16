@@ -7,6 +7,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
     private let headerItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let spentItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let toggleItem = NSMenuItem(title: "Pause", action: nil, keyEquivalent: "")
     private let subtractItem = NSMenuItem(title: "Subtract Minutes...", action: nil, keyEquivalent: "")
     private let resetItem = NSMenuItem(title: "Reset Today's Timer", action: nil, keyEquivalent: "")
@@ -64,6 +65,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func configureMenu() {
         headerItem.isEnabled = false
         menu.addItem(headerItem)
+
+        spentItem.isEnabled = false
+        menu.addItem(spentItem)
+
         menu.addItem(.separator())
 
         toggleItem.target = self
@@ -127,6 +132,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         headerItem.title = timer.isFinished
             ? "Time's up for today"
             : "\(timer.minutesRemaining) min remaining today"
+        spentItem.title = "Time spent today: \(timer.spentMinutes) min"
 
         toggleItem.title = timer.isRunning ? "Pause" : "Resume"
         toggleItem.isEnabled = !timer.isFinished

@@ -4,7 +4,7 @@ import Foundation
 public struct TimerSnapshot: Codable, Equatable {
     /// Local calendar day the snapshot belongs to, formatted as `yyyy-MM-dd`.
     public var dayKey: String
-    /// Seconds counted against the daily budget so far.
+    /// Seconds counted against the daily budget so far, including manual subtractions.
     public var counted: TimeInterval
     /// Whether the timer was counting down when the snapshot was taken.
     public var isRunning: Bool
@@ -68,6 +68,12 @@ public struct DailyTimer {
         DailyTimer.minutesText(from: remaining)
     }
 
+    /// Whole minutes recorded against today's budget, including manual
+    /// subtractions, rounded down.
+    public var spentMinutes: Int {
+        Int(max(0, counted) / 60)
+    }
+
     public static func minutes(from remaining: TimeInterval) -> Int {
         guard remaining > 0 else { return 0 }
         return Int(ceil(remaining / 60))
@@ -98,7 +104,8 @@ public struct DailyTimer {
         let delta = now.timeIntervalSince(lastTick)
         guard delta > 0 else { return }
 
-        counted = min(DailyTimer.dailyBudget, counted + min(delta, DailyTimer.maximumTickGap))
+        let gap = min(delta, DailyTimer.maximumTickGap)
+        counted = min(DailyTimer.dailyBudget, counted + gap)
         if counted >= DailyTimer.dailyBudget {
             isRunning = false
         }

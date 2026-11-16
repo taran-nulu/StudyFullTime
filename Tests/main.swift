@@ -173,19 +173,54 @@ private func testManualResetRefillsAndPauses() {
     timer.reset(now: now.addingTimeInterval(5), calendar: calendar)
 
     checkEqual(timer.counted, 0, accuracy: 0.001, "reset counted")
+    checkEqual(timer.spentMinutes, 0, "reset spent minutes")
     check(!timer.isRunning, "reset timer should be paused")
     checkEqual(timer.displayText, "480m", "reset display")
 }
 
-private func testSubtractMinutesMarksTimeAsUsed() {
+private func testSpentTracksBudgetUsed() {
     let now = date(2026, 1, 15, 9, 0)
     var timer = DailyTimer(snapshot: nil, now: now, calendar: calendar)
 
-    timer.subtract(minutes: 30, now: now)
+    checkEqual(timer.spentMinutes, 0, "initial spent minutes")
 
-    checkEqual(timer.counted, 1800, accuracy: 0.001, "subtracted counted")
-    checkEqual(timer.displayText, "450m", "subtracted display")
+    timer.setRunning(true, now: now)
+    for second in 1...61 {
+        timer.tick(now: now.addingTimeInterval(Double(second)), calendar: calendar)
+    }
+
+    checkEqual(timer.spentMinutes, 1, "spent minutes round down")
+
+    timer.setRunning(false, now: now.addingTimeInterval(61))
+    timer.tick(now: now.addingTimeInterval(121), calendar: calendar)
+    checkEqual(timer.spentMinutes, 1, "spent frozen while paused")
+}
+
+private func testSubtractMinutesCountsAsSpent() {
+    let now = date(2026, 1, 15, 9, 0)
+    var timer = DailyTimer(snapshot: nil, now: now, calendar: calendar)
+
+    timer.subtract(minutes: 230, now: now)
+
+    checkEqual(timer.counted, 13800, accuracy: 0.001, "subtracted counted")
+    checkEqual(timer.displayText, "250m", "subtracted display")
+    checkEqual(timer.spentMinutes, 230, "subtracted spent minutes")
     check(!timer.isRunning, "subtracting must not start a paused timer")
+}
+
+private func testSubtractIncreasesSpentTime() {
+    let now = date(2026, 1, 15, 9, 0)
+    let saved = snapshot(counted: 600, running: true, on: now)
+    var timer = DailyTimer(snapshot: saved, now: now, calendar: calendar)
+
+    timer.subtract(minutes: 20, now: now)
+
+    checkEqual(timer.counted, 1800, accuracy: 0.001, "counted after subtract")
+    checkEqual(timer.spentMinutes, 30, "spent minutes after subtract")
+    check(timer.isRunning, "subtracting should not pause a running timer")
+
+    timer.tick(now: now.addingTimeInterval(1), calendar: calendar)
+    checkEqual(timer.spentMinutes, 30, "spent keeps counting after subtract")
 }
 
 private func testSubtractWhileRunningKeepsRunning() {
@@ -233,9 +268,51 @@ private func testMidnightRolloverRefillsAndPauses() {
     timer.tick(now: date(2026, 1, 16, 0, 0, 1), calendar: calendar)
 
     checkEqual(timer.counted, 0, accuracy: 0.001, "rollover counted")
+    checkEqual(timer.spentMinutes, 0, "rollover spent minutes")
     check(!timer.isRunning, "rollover timer should be paused")
     checkEqual(timer.dayKey, "2026-01-16", "rollover day key")
     checkEqual(timer.displayText, "480m", "rollover display")
+}
+
+private func testSpentMinutesRoundDown() {
+    let now = date(2026, 1, 15, 9, 0)
+    let dayKey = DailyTimer.dayKey(for: now, calendar: calendar)
+    let cases: [(TimeInterval, Int)] = [
+        (0, 0), (59, 0), (60, 1), (61, 1), (13800, 230), (28800, 480)
+    ]
+
+    for (seconds, expected) in cases {
+        let saved = TimerSnapshot(dayKey: dayKey, counted: seconds, isRunning: false)
+        let timer = DailyTimer(snapshot: saved, now: now, calendar: calendar)
+        checkEqual(timer.spentMinutes, expected, "spent minutes for \(seconds)s")
+    }
+}
+
+private func testLegacySnapshotWithoutSpentKeyStillLoads() {
+    let json = """
+    {"dayKey":"2026-01-15","counted":120,"isRunning":false}
+    """.data(using: .utf8)!
+
+    let decoded = try! JSONDecoder().decode(TimerSnapshot.self, from: json)
+
+    checkEqual(decoded.counted, 120, accuracy: 0.001, "legacy counted")
+    check(!decoded.isRunning, "legacy running flag")
+    checkEqual(DailyTimer(snapshot: decoded, now: date(2026, 1, 15, 9, 0),
+                          calendar: calendar).spentMinutes,
+               2, "legacy spent minutes")
+}
+
+private func testSnapshotWithOldSpentFieldShowsCountedMinutes() {
+    let json = """
+    {"dayKey":"2026-01-15","version":2,"counted":13800,"spent":0,"isRunning":false}
+    """.data(using: .utf8)!
+
+    let decoded = try! JSONDecoder().decode(TimerSnapshot.self, from: json)
+    let timer = DailyTimer(snapshot: decoded, now: date(2026, 1, 15, 9, 0),
+                           calendar: calendar)
+
+    checkEqual(timer.counted, 13800, accuracy: 0.001, "old snapshot counted")
+    checkEqual(timer.spentMinutes, 230, "old snapshot spent minutes")
 }
 
 private func testMinutesRoundUpAndCollapseAtZero() {
@@ -282,11 +359,16 @@ testLongGapIsClampedInsteadOfConsumingTheBudget()
 testSynchronizeAnchorsClockWithoutCountingGap()
 testTimerStopsAtZeroAndCannotResume()
 testManualResetRefillsAndPauses()
-testSubtractMinutesMarksTimeAsUsed()
+testSpentTracksBudgetUsed()
+testSubtractMinutesCountsAsSpent()
+testSubtractIncreasesSpentTime()
 testSubtractWhileRunningKeepsRunning()
 testSubtractingMoreThanRemainingFinishesAndStops()
 testNonPositiveSubtractIsIgnored()
 testMidnightRolloverRefillsAndPauses()
+testSpentMinutesRoundDown()
+testLegacySnapshotWithoutSpentKeyStillLoads()
+testSnapshotWithOldSpentFieldShowsCountedMinutes()
 testMinutesRoundUpAndCollapseAtZero()
 testDisplayTextUsesMinutesOnly()
 testStoreRoundTrip()
