@@ -3,6 +3,9 @@ import AppKit
 final class StatusItemController: NSObject, NSMenuDelegate {
     private var timer: DailyTimer
     private let store: TimerStateStore
+    private var tasks: TaskList
+    private let taskStore: TaskStateStore
+    private var tasksWindowController: TasksWindowController?
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
@@ -10,6 +13,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let spentItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let zeroCountItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let streakItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let tasksItem = NSMenuItem(title: "Tasks…", action: nil, keyEquivalent: "")
     private let toggleItem = NSMenuItem(title: "Pause", action: nil, keyEquivalent: "")
     private let addItem = NSMenuItem(title: "Add Minutes...", action: nil, keyEquivalent: "")
     private let subtractItem = NSMenuItem(title: "Subtract Minutes...", action: nil, keyEquivalent: "")
@@ -20,9 +24,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var lastSymbolName: String?
     private var lastPersistDate = Date.distantPast
 
-    init(timer: DailyTimer, store: TimerStateStore) {
+    init(timer: DailyTimer,
+         store: TimerStateStore,
+         tasks: TaskList,
+         taskStore: TaskStateStore) {
         self.timer = timer
         self.store = store
+        self.tasks = tasks
+        self.taskStore = taskStore
         super.init()
         configureStatusItem()
         configureMenu()
@@ -38,6 +47,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         registerObservers()
         refresh()
         persist()
+        persistTasks()
 
         let ticker = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             self?.handleTick()
@@ -49,6 +59,17 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     func persist() {
         store.save(timer.snapshot())
         lastPersistDate = Date()
+    }
+
+    func persistTasks() {
+        taskStore.save(tasks.snapshot())
+    }
+
+    /// Stops any running task (pause-on-quit) and saves everything.
+    func shutdown() {
+        tasks.stopAll(now: Date())
+        persist()
+        persistTasks()
     }
 
     // MARK: - Setup
@@ -95,6 +116,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         streakItem.isEnabled = false
         menu.addItem(streakItem)
+
+        menu.addItem(.separator())
+
+        tasksItem.target = self
+        tasksItem.action = #selector(showTasks)
+        tasksItem.keyEquivalent = "t"
+        tasksItem.keyEquivalentModifierMask = .command
+        menu.addItem(tasksItem)
 
         menu.addItem(.separator())
 
@@ -158,6 +187,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let previousDayKey = timer.dayKey
 
         timer.tick(now: now)
+        tasks.tick(now: now, isActive: timer.isRunning)
         refresh()
 
         // Zero crossings and day rollovers must be saved immediately so a
@@ -166,6 +196,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let dayChanged = timer.dayKey != previousDayKey
         if statsChanged || dayChanged || now.timeIntervalSince(lastPersistDate) >= 10 {
             persist()
+            persistTasks()
         }
     }
 
@@ -190,8 +221,18 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         zeroCountItem.title = "Times completed: \(timer.timesReachedZero)"
         streakItem.title = "Streak: \(dayCount(timer.currentStreak))"
             + " · Longest: \(dayCount(timer.longestStreak))"
+        if let running = tasks.runningTask {
+            tasksItem.title = "Tasks… — \(running.elapsedMinutes) min"
+        } else {
+            tasksItem.title = "Tasks…"
+        }
 
         toggleItem.title = timer.isRunning ? "Pause" : "Resume"
+
+        if let tasksWindowController = tasksWindowController,
+           tasksWindowController.window?.isVisible == true {
+            tasksWindowController.refresh()
+        }
     }
 
     private func dayCount(_ count: Int) -> String {
@@ -205,6 +246,19 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     // MARK: - Menu actions
+
+    @objc private func showTasks() {
+        if tasksWindowController == nil {
+            let controller = TasksWindowController()
+            controller.delegate = self
+            tasksWindowController = controller
+        }
+
+        NSApp.activate(ignoringOtherApps: true)
+        tasksWindowController?.showWindow(nil)
+        tasksWindowController?.window?.makeKeyAndOrderFront(nil)
+        tasksWindowController?.refresh()
+    }
 
     @objc private func toggleTimer() {
         timer.toggle(now: Date())
@@ -266,7 +320,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     @objc private func quit() {
-        persist()
+        shutdown()
         NSApp.terminate(nil)
     }
 
@@ -274,23 +328,84 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func systemWillSleep() {
         persist()
+        persistTasks()
     }
 
     @objc private func systemDidWake() {
-        timer.synchronize(now: Date())
+        let now = Date()
+        timer.synchronize(now: now)
+        tasks.synchronize(now: now)
         persist()
+        persistTasks()
         refresh()
     }
 
     @objc private func dayDidChange() {
-        timer.synchronize(now: Date())
+        let now = Date()
+        timer.synchronize(now: now)
+        tasks.synchronize(now: now)
         persist()
+        persistTasks()
         refresh()
     }
 
     // MARK: - NSMenuDelegate
 
     func menuWillOpen(_ menu: NSMenu) {
+        refresh()
+    }
+}
+
+// MARK: - TasksWindowControllerDelegate
+
+extension StatusItemController: TasksWindowControllerDelegate {
+    func tasksForWindow() -> [StudyTask] {
+        tasks.tasks
+    }
+
+    func isStudyTimerRunningForWindow() -> Bool {
+        timer.isRunning
+    }
+
+    func tasksWindowDidAdd(title: String) {
+        tasks.add(title: title, now: Date())
+        persistTasks()
+        refresh()
+    }
+
+    func tasksWindowDidDelete(id: UUID) {
+        tasks.delete(id: id, now: Date())
+        persistTasks()
+        refresh()
+    }
+
+    func tasksWindowDidToggleCompleted(id: UUID) {
+        tasks.toggleCompleted(id: id, now: Date())
+        persistTasks()
+        refresh()
+    }
+
+    func tasksWindowDidStart(id: UUID) {
+        tasks.start(id: id, now: Date())
+        persistTasks()
+        refresh()
+    }
+
+    func tasksWindowDidStop(id: UUID) {
+        tasks.stop(id: id, now: Date())
+        persistTasks()
+        refresh()
+    }
+
+    func tasksWindowDidClearCompleted() {
+        tasks.clearCompleted(now: Date())
+        persistTasks()
+        refresh()
+    }
+
+    func tasksWindowDidDeleteAll() {
+        tasks.deleteAll(now: Date())
+        persistTasks()
         refresh()
     }
 }

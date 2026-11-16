@@ -14,6 +14,7 @@ starts each new day paused.
 - **Add time on demand.** Choose **Add Minutes...**, enter any positive number of minutes, and the remaining time increases immediately. Additions can take the countdown above the original 480-minute budget and never change time spent.
 - **Time spent today.** The dropdown shows total spent time in whole minutes: running time plus manual subtractions. Manually added minutes are excluded, so adding time never lowers the spent figure. It can exceed 480 minutes.
 - **Zero and streak stats.** The dropdown shows how many times the countdown has reached zero, the current daily streak, and the longest streak. A streak counts consecutive calendar days on which zero was reached at least once; reaching zero several times in one day does not extend it. A streak stays current through the day after the last zero and then expires if no new zero occurs. The longest streak is kept forever.
+- **Tasks.** Choose **Tasks…** or press **⌘T** to open the task window. Add tasks, check them off to complete them, delete individual tasks, use **Delete Completed** to clear finished ones, or **Delete All** to remove every task after confirming. Completed tasks stay in the list until deleted. **Start** a task to track its minutes; **Stop** or completing it freezes the clock. Task time only advances while the study timer is running, and a task is paused when the app quits.
 - **Resets at midnight** to a full, paused budget. It also resets when the app notices the calendar day changed while running.
 - **Only counts while the Mac is awake and the app is running.** Sleep gaps and time with the app quit do not consume the budget.
 - **Persists across restarts.** The counted time and paused/running state are saved in `UserDefaults`, so relaunching within the same day picks up where you left off.
@@ -26,6 +27,7 @@ While the dropdown menu is open:
 
 | Action | Shortcut |
 | --- | --- |
+| Open tasks | ⌘T |
 | Pause / Resume | ⌘P |
 | Add minutes | ⌘A |
 | Subtract minutes | ⌘S |
@@ -71,10 +73,13 @@ moved to an Xcode/SwiftPM toolchain later if desired.
 
 ```
 Sources/StudyTimerCore/DailyTimer.swift       timer state machine and minute formatting
+Sources/StudyTimerCore/TaskList.swift         task list and per-task time tracking
 Sources/StudyTimerCore/TimerStore.swift       UserDefaults persistence
+Sources/StudyTimerCore/TaskStore.swift        task persistence
 Sources/StudyFullTime/main.swift              AppKit entry point
 Sources/StudyFullTime/AppDelegate.swift       app lifecycle
 Sources/StudyFullTime/StatusItemController.swift  menu bar item and menu
+Sources/StudyFullTime/TasksWindowController.swift task window UI
 Tests/main.swift                              standalone timer-core checks
 scripts/build-app.sh                          assembles and signs the .app bundle
 ```

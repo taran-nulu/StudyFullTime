@@ -580,6 +580,204 @@ private func testStoreRoundTrip() {
     checkEqual(store.load(), saved, "store round trip")
 }
 
+private func testTaskAddTrimsAndRejectsBlankTitles() {
+    let now = date(2026, 1, 15, 9, 0)
+    var list = TaskList(snapshot: nil, now: now)
+
+    let added = list.add(title: "  Read chapter  ", now: now)
+
+    checkEqual(added?.title ?? "", "Read chapter", "trimmed task title")
+    check(list.add(title: "   ", now: now) == nil, "blank task rejected")
+    checkEqual(list.tasks.count, 1, "blank task not stored")
+}
+
+private func testTaskDeleteRemovesOnlyThatTask() {
+    let now = date(2026, 1, 15, 9, 0)
+    var list = TaskList(snapshot: nil, now: now)
+    let first = list.add(title: "First", now: now)!
+    let second = list.add(title: "Second", now: now)!
+
+    list.delete(id: first.id, now: now)
+
+    checkEqual(list.tasks.count, 1, "one task after delete")
+    checkEqual(list.tasks.first?.id, second.id, "delete keeps other tasks")
+}
+
+private func testCompletingTaskKeepsItInTheList() {
+    let now = date(2026, 1, 15, 9, 0)
+    var list = TaskList(snapshot: nil, now: now)
+    let task = list.add(title: "Read", now: now)!
+
+    list.setCompleted(true, id: task.id, now: now)
+
+    checkEqual(list.tasks.count, 1, "completed task is kept")
+    check(list.tasks[0].isCompleted, "task marked completed")
+
+    list.toggleCompleted(id: task.id, now: now)
+    check(!list.tasks[0].isCompleted, "task can be reopened")
+    checkEqual(list.tasks.count, 1, "reopening does not delete")
+}
+
+private func testCompletingRunningTaskStopsItsClock() {
+    let now = date(2026, 1, 15, 9, 0)
+    var list = TaskList(snapshot: nil, now: now)
+    let task = list.add(title: "Read", now: now)!
+
+    list.start(id: task.id, now: now)
+    list.tick(now: now.addingTimeInterval(1), isActive: true)
+    list.setCompleted(true, id: task.id, now: now.addingTimeInterval(1))
+    list.tick(now: now.addingTimeInterval(61), isActive: true)
+
+    check(!list.tasks[0].isRunning, "completing stops the task clock")
+    checkEqual(list.tasks[0].elapsed, 1, accuracy: 0.001,
+               "elapsed freezes when completed")
+    check(list.tasks[0].isCompleted, "task stays completed")
+}
+
+private func testClearCompletedRemovesOnlyCompletedTasks() {
+    let now = date(2026, 1, 15, 9, 0)
+    var list = TaskList(snapshot: nil, now: now)
+    let done = list.add(title: "Done", now: now)!
+    let open = list.add(title: "Open", now: now)!
+    list.setCompleted(true, id: done.id, now: now)
+
+    check(list.hasCompletedTasks, "list reports completed tasks")
+    list.clearCompleted(now: now)
+
+    checkEqual(list.tasks.count, 1, "clear keeps open tasks")
+    checkEqual(list.tasks.first?.id, open.id, "open task survives clear")
+    check(!list.hasCompletedTasks, "no completed tasks remain")
+}
+
+private func testDeleteAllRemovesEveryTask() {
+    let now = date(2026, 1, 15, 9, 0)
+    var list = TaskList(snapshot: nil, now: now)
+    let done = list.add(title: "Done", now: now)!
+    let running = list.add(title: "Running", now: now)!
+    list.setCompleted(true, id: done.id, now: now)
+    list.start(id: running.id, now: now)
+    list.tick(now: now.addingTimeInterval(1), isActive: true)
+
+    list.deleteAll(now: now.addingTimeInterval(1))
+
+    check(list.tasks.isEmpty, "delete all removes every task")
+    check(list.runningTask == nil, "delete all clears the running task")
+    check(!list.hasCompletedTasks, "delete all leaves no completed tasks")
+}
+
+private func testTaskStartAndStopTrackElapsedTime() {
+    let now = date(2026, 1, 15, 9, 0)
+    var list = TaskList(snapshot: nil, now: now)
+    let task = list.add(title: "Read", now: now)!
+
+    list.start(id: task.id, now: now)
+    check(list.tasks[0].isRunning, "task starts running")
+
+    list.tick(now: now.addingTimeInterval(1), isActive: true)
+    checkEqual(list.tasks[0].elapsed, 1, accuracy: 0.001, "elapsed after one second")
+
+    list.tick(now: now.addingTimeInterval(61), isActive: true)
+    checkEqual(list.tasks[0].elapsed, 3, accuracy: 0.001, "elapsed clamps long gaps")
+
+    for second in 0..<60 {
+        list.tick(now: now.addingTimeInterval(61 + Double(second)),
+                  isActive: true)
+    }
+    checkEqual(list.tasks[0].elapsedMinutes, 1, "elapsed minutes round down")
+
+    list.stop(id: task.id, now: now.addingTimeInterval(120))
+    list.tick(now: now.addingTimeInterval(300), isActive: true)
+    checkEqual(list.tasks[0].elapsed, 62, accuracy: 0.001,
+               "stopped task does not accrue")
+}
+
+private func testStartingAnotherTaskStopsTheFirst() {
+    let now = date(2026, 1, 15, 9, 0)
+    var list = TaskList(snapshot: nil, now: now)
+    let first = list.add(title: "First", now: now)!
+    let second = list.add(title: "Second", now: now)!
+
+    list.start(id: first.id, now: now)
+    list.tick(now: now.addingTimeInterval(1), isActive: true)
+    list.start(id: second.id, now: now.addingTimeInterval(1))
+    list.tick(now: now.addingTimeInterval(2), isActive: true)
+
+    check(!list.tasks[0].isRunning, "first task stopped")
+    check(list.tasks[1].isRunning, "second task running")
+    checkEqual(list.tasks[0].elapsed, 1, accuracy: 0.001, "first elapsed frozen")
+    checkEqual(list.tasks[1].elapsed, 1, accuracy: 0.001, "second elapsed counted")
+    checkEqual(list.runningTask?.id, second.id, "only one running task")
+}
+
+private func testTaskClockFollowsStudyTimerState() {
+    let now = date(2026, 1, 15, 9, 0)
+    var list = TaskList(snapshot: nil, now: now)
+    let task = list.add(title: "Read", now: now)!
+
+    list.start(id: task.id, now: now)
+    list.tick(now: now.addingTimeInterval(60), isActive: false)
+    checkEqual(list.tasks[0].elapsed, 0, accuracy: 0.001,
+               "paused study timer freezes task time")
+    check(list.tasks[0].isRunning, "task stays selected while paused")
+
+    list.tick(now: now.addingTimeInterval(61), isActive: true)
+    checkEqual(list.tasks[0].elapsed, 1, accuracy: 0.001,
+               "task resumes with the study timer")
+}
+
+private func testCompletedTaskCannotBeStarted() {
+    let now = date(2026, 1, 15, 9, 0)
+    var list = TaskList(snapshot: nil, now: now)
+    let task = list.add(title: "Read", now: now)!
+    list.setCompleted(true, id: task.id, now: now)
+
+    list.start(id: task.id, now: now)
+
+    check(!list.tasks[0].isRunning, "completed task cannot start")
+}
+
+private func testTaskListLoadStopsRunningTasks() {
+    let now = date(2026, 1, 15, 9, 0)
+    let saved = TaskSnapshot(tasks: [
+        StudyTask(title: "Running", elapsed: 120, isRunning: true),
+        StudyTask(title: "Done", isCompleted: true, elapsed: 300),
+    ])
+
+    let list = TaskList(snapshot: saved, now: now)
+
+    check(!list.tasks[0].isRunning, "loaded task is paused on quit")
+    checkEqual(list.tasks[0].elapsed, 120, accuracy: 0.001,
+               "loaded elapsed is preserved")
+    check(list.tasks[1].isCompleted, "completed state is preserved")
+}
+
+private func testTaskStoreRoundTrip() {
+    let suiteName = "StudyTaskCoreTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let store = UserDefaultsTaskStore(defaults: defaults, key: "tasks")
+    check(store.load() == nil, "empty task store should load nil")
+
+    let saved = TaskSnapshot(tasks: [
+        StudyTask(title: "Read", elapsed: 125),
+        StudyTask(title: "Write", isCompleted: true, elapsed: 60),
+    ])
+    store.save(saved)
+
+    checkEqual(store.load(), saved, "task store round trip")
+}
+
+private func testTaskSnapshotSurvivesJSONRoundTrip() {
+    let original = TaskSnapshot(tasks: [
+        StudyTask(title: "Read", isCompleted: true, elapsed: 125),
+    ])
+    let data = try! JSONEncoder().encode(original)
+    let decoded = try! JSONDecoder().decode(TaskSnapshot.self, from: data)
+
+    checkEqual(decoded, original, "task snapshot JSON round trip")
+}
+
 // MARK: - Runner
 
 testFreshDayStartsFullAndPaused()
@@ -617,6 +815,19 @@ testOlderSnapshotsDefaultStatisticsToZero()
 testMinutesRoundUpAndCollapseAtZero()
 testDisplayTextUsesMinutesOnly()
 testStoreRoundTrip()
+testTaskAddTrimsAndRejectsBlankTitles()
+testTaskDeleteRemovesOnlyThatTask()
+testCompletingTaskKeepsItInTheList()
+testCompletingRunningTaskStopsItsClock()
+testClearCompletedRemovesOnlyCompletedTasks()
+testDeleteAllRemovesEveryTask()
+testTaskStartAndStopTrackElapsedTime()
+testStartingAnotherTaskStopsTheFirst()
+testTaskClockFollowsStudyTimerState()
+testCompletedTaskCannotBeStarted()
+testTaskListLoadStopsRunningTasks()
+testTaskStoreRoundTrip()
+testTaskSnapshotSurvivesJSONRoundTrip()
 
 if failures == 0 {
     print("All \(checks) checks passed.")
