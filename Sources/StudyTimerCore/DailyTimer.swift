@@ -18,8 +18,10 @@ public struct TimerSnapshot: Codable, Equatable {
 
 /// Tracks the 8-hour daily study budget.
 ///
-/// Time only drains while the timer is running. Day rollover happens at local
-/// midnight and always leaves the timer paused with a full budget.
+/// Time only drains while the timer is running. The timer is allowed to run
+/// past the daily budget, in which case the remaining time goes negative.
+/// Day rollover happens at local midnight and always leaves the timer paused
+/// with a full budget.
 public struct DailyTimer {
     /// Eight hours per day.
     public static let dailyBudget: TimeInterval = 8 * 60 * 60
@@ -39,9 +41,8 @@ public struct DailyTimer {
         self.lastTick = now
 
         if let snapshot = snapshot, snapshot.dayKey == key {
-            let restored = min(max(snapshot.counted, 0), DailyTimer.dailyBudget)
-            self.counted = restored
-            self.isRunning = snapshot.isRunning && restored < DailyTimer.dailyBudget
+            self.counted = max(snapshot.counted, 0)
+            self.isRunning = snapshot.isRunning
         } else {
             // First launch of the day, or the saved state is from another day.
             self.counted = 0
@@ -49,34 +50,41 @@ public struct DailyTimer {
         }
     }
 
-    /// Seconds left in today's budget.
+    /// Seconds left in today's budget. Negative once the timer has overrun.
     public var remaining: TimeInterval {
-        max(0, DailyTimer.dailyBudget - counted)
+        DailyTimer.dailyBudget - counted
     }
 
-    public var isFinished: Bool {
-        remaining <= 0
+    public var isOverBudget: Bool {
+        remaining < 0
     }
 
-    /// Remaining time in whole minutes, rounded up so a full day reads 480.
+    /// Remaining time in whole minutes. Positive time rounds up; negative time
+    /// truncates toward zero, so the first negative minute appears only after a
+    /// full minute of overrun.
     public var minutesRemaining: Int {
         DailyTimer.minutes(from: remaining)
     }
 
-    /// Compact text for the menu bar, e.g. `480m`.
+    /// Compact text for the menu bar, e.g. `480m`, `0m`, or `-2m`.
     public var displayText: String {
         DailyTimer.minutesText(from: remaining)
     }
 
     /// Whole minutes recorded against today's budget, including manual
-    /// subtractions, rounded down.
+    /// subtractions, rounded down. Can exceed 480.
     public var spentMinutes: Int {
         Int(max(0, counted) / 60)
     }
 
     public static func minutes(from remaining: TimeInterval) -> Int {
-        guard remaining > 0 else { return 0 }
-        return Int(ceil(remaining / 60))
+        if remaining > 0 {
+            return Int(ceil(remaining / 60))
+        }
+        if remaining < 0 {
+            return Int(remaining / 60)
+        }
+        return 0
     }
 
     public static func minutesText(from remaining: TimeInterval) -> String {
@@ -105,10 +113,7 @@ public struct DailyTimer {
         guard delta > 0 else { return }
 
         let gap = min(delta, DailyTimer.maximumTickGap)
-        counted = min(DailyTimer.dailyBudget, counted + gap)
-        if counted >= DailyTimer.dailyBudget {
-            isRunning = false
-        }
+        counted += gap
     }
 
     /// Starts a fresh day if `now` falls on a different calendar day.
@@ -125,9 +130,9 @@ public struct DailyTimer {
         return true
     }
 
-    /// Pauses or resumes. Resuming is ignored once the budget is used up.
+    /// Pauses or resumes. Resuming is allowed even when the budget is spent.
     public mutating func setRunning(_ running: Bool, now: Date) {
-        isRunning = running && !isFinished
+        isRunning = running
         lastTick = now
     }
 
@@ -143,16 +148,12 @@ public struct DailyTimer {
         lastTick = now
     }
 
-    /// Marks the given number of minutes as already used. The total is capped
-    /// at the daily budget, and a running timer stops once the budget is spent.
+    /// Marks the given number of minutes as already used. This can push the
+    /// remaining time below zero and never changes the running state.
     public mutating func subtract(minutes: Int, now: Date) {
         guard minutes > 0 else { return }
 
-        counted = min(DailyTimer.dailyBudget,
-                      counted + TimeInterval(minutes) * 60)
-        if counted >= DailyTimer.dailyBudget {
-            isRunning = false
-        }
+        counted += TimeInterval(minutes) * 60
         lastTick = now
     }
 

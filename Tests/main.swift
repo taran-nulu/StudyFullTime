@@ -69,7 +69,7 @@ private func testFreshDayStartsFullAndPaused() {
     checkEqual(timer.displayText, "480m", "fresh display")
     checkEqual(timer.remaining, 8 * 60 * 60, accuracy: 0.001, "fresh remaining")
     check(!timer.isRunning, "fresh timer should be paused")
-    check(!timer.isFinished, "fresh timer should not be finished")
+    check(!timer.isOverBudget, "fresh timer should not be over budget")
 }
 
 private func testSnapshotFromAnotherDayIsDiscarded() {
@@ -148,21 +148,57 @@ private func testSynchronizeAnchorsClockWithoutCountingGap() {
     checkEqual(timer.counted, 1, accuracy: 0.001, "counted after sync")
 }
 
-private func testTimerStopsAtZeroAndCannotResume() {
+private func testRunningPastBudgetGoesNegative() {
     let now = date(2026, 1, 15, 9, 0)
     let almostDone = snapshot(counted: 28799, running: true, on: now)
     var timer = DailyTimer(snapshot: almostDone, now: now, calendar: calendar)
 
     check(timer.isRunning, "restored timer should be running")
-    timer.tick(now: now.addingTimeInterval(2), calendar: calendar)
 
-    check(timer.isFinished, "timer should be finished")
-    check(!timer.isRunning, "finished timer should stop")
-    checkEqual(timer.counted, 28800, accuracy: 0.001, "full counted")
-    checkEqual(timer.displayText, "0m", "finished display")
+    for second in 1...61 {
+        timer.tick(now: now.addingTimeInterval(Double(second)), calendar: calendar)
+    }
 
-    timer.setRunning(true, now: now.addingTimeInterval(3))
-    check(!timer.isRunning, "finished timer must not resume")
+    checkEqual(timer.counted, 28860, accuracy: 0.001, "overrun counted")
+    check(timer.isOverBudget, "timer should be over budget")
+    check(timer.isRunning, "timer must keep running past zero")
+    checkEqual(timer.displayText, "-1m", "negative display after a full minute")
+    checkEqual(timer.minutesRemaining, -1, "negative minutes remaining")
+    checkEqual(timer.spentMinutes, 481, "spent minutes past 480")
+}
+
+private func testFirstOverrunMinuteStillShowsZero() {
+    let now = date(2026, 1, 15, 9, 0)
+    let almostDone = snapshot(counted: 28799, running: true, on: now)
+    var timer = DailyTimer(snapshot: almostDone, now: now, calendar: calendar)
+
+    for second in 1...60 {
+        timer.tick(now: now.addingTimeInterval(Double(second)), calendar: calendar)
+    }
+
+    check(timer.remaining < 0, "timer should already be over budget")
+    checkEqual(timer.displayText, "0m", "less than a minute over")
+    checkEqual(timer.minutesRemaining, 0, "truncated negative minutes")
+
+    timer.tick(now: now.addingTimeInterval(61), calendar: calendar)
+    checkEqual(timer.displayText, "-1m", "first full minute over")
+    checkEqual(timer.minutesRemaining, -1, "negative minutes after a full minute")
+}
+
+private func testPausedOverrunCanResume() {
+    let now = date(2026, 1, 15, 9, 0)
+    let overrun = snapshot(counted: 29000, running: false, on: now)
+    var timer = DailyTimer(snapshot: overrun, now: now, calendar: calendar)
+
+    check(!timer.isRunning, "restored overrun timer should be paused")
+    checkEqual(timer.counted, 29000, accuracy: 0.001, "overrun restored without clamping")
+    checkEqual(timer.displayText, "-3m", "paused overrun display")
+
+    timer.setRunning(true, now: now)
+    check(timer.isRunning, "overrun timer should resume")
+
+    timer.tick(now: now.addingTimeInterval(1), calendar: calendar)
+    checkEqual(timer.counted, 29001, accuracy: 0.001, "overrun counts after resume")
 }
 
 private func testManualResetRefillsAndPauses() {
@@ -235,17 +271,21 @@ private func testSubtractWhileRunningKeepsRunning() {
     checkEqual(timer.counted, 301, accuracy: 0.001, "counted after subtraction")
 }
 
-private func testSubtractingMoreThanRemainingFinishesAndStops() {
+private func testSubtractingPastZeroGoesNegative() {
     let now = date(2026, 1, 15, 9, 0)
-    let almostDone = snapshot(counted: 28799, running: true, on: now)
-    var timer = DailyTimer(snapshot: almostDone, now: now, calendar: calendar)
+    let fullDay = snapshot(counted: 28800, running: false, on: now)
+    var timer = DailyTimer(snapshot: fullDay, now: now, calendar: calendar)
 
     timer.subtract(minutes: 5, now: now)
 
-    checkEqual(timer.counted, 28800, accuracy: 0.001, "clamped subtracted counted")
-    checkEqual(timer.displayText, "0m", "clamped subtracted display")
-    check(timer.isFinished, "subtracting past the budget should finish the day")
-    check(!timer.isRunning, "finished timer should stop after subtracting")
+    checkEqual(timer.counted, 29100, accuracy: 0.001, "overrun subtracted counted")
+    checkEqual(timer.remaining, -300, accuracy: 0.001, "overrun remaining")
+    checkEqual(timer.displayText, "-5m", "overrun subtracted display")
+    checkEqual(timer.spentMinutes, 485, "overrun spent minutes")
+    check(!timer.isRunning, "subtracting must not start a paused timer")
+
+    timer.setRunning(true, now: now)
+    check(timer.isRunning, "subtraction overrun can be resumed")
 }
 
 private func testNonPositiveSubtractIsIgnored() {
@@ -261,9 +301,10 @@ private func testNonPositiveSubtractIsIgnored() {
 
 private func testMidnightRolloverRefillsAndPauses() {
     let dayOne = date(2026, 1, 15, 23, 0)
-    let saved = snapshot(counted: 120, running: true, on: dayOne)
+    let saved = snapshot(counted: 30000, running: true, on: dayOne)
     var timer = DailyTimer(snapshot: saved, now: dayOne, calendar: calendar)
     check(timer.isRunning, "restored timer should be running")
+    check(timer.isOverBudget, "restored timer should be over budget")
 
     timer.tick(now: date(2026, 1, 16, 0, 0, 1), calendar: calendar)
 
@@ -278,7 +319,8 @@ private func testSpentMinutesRoundDown() {
     let now = date(2026, 1, 15, 9, 0)
     let dayKey = DailyTimer.dayKey(for: now, calendar: calendar)
     let cases: [(TimeInterval, Int)] = [
-        (0, 0), (59, 0), (60, 1), (61, 1), (13800, 230), (28800, 480)
+        (0, 0), (59, 0), (60, 1), (61, 1), (13800, 230),
+        (28800, 480), (28860, 481), (29040, 484), (30000, 500)
     ]
 
     for (seconds, expected) in cases {
@@ -323,7 +365,13 @@ private func testMinutesRoundUpAndCollapseAtZero() {
     checkEqual(DailyTimer.minutes(from: 59), 1, "59s")
     checkEqual(DailyTimer.minutes(from: 1), 1, "1s")
     checkEqual(DailyTimer.minutes(from: 0), 0, "0s")
-    checkEqual(DailyTimer.minutes(from: -10), 0, "negative")
+    checkEqual(DailyTimer.minutes(from: -1), 0, "-1s")
+    checkEqual(DailyTimer.minutes(from: -10), 0, "-10s")
+    checkEqual(DailyTimer.minutes(from: -59), 0, "-59s")
+    checkEqual(DailyTimer.minutes(from: -60), -1, "-60s")
+    checkEqual(DailyTimer.minutes(from: -61), -1, "-61s")
+    checkEqual(DailyTimer.minutes(from: -119), -1, "-119s")
+    checkEqual(DailyTimer.minutes(from: -120), -2, "-120s")
 }
 
 private func testDisplayTextUsesMinutesOnly() {
@@ -342,7 +390,7 @@ private func testStoreRoundTrip() {
     let store = UserDefaultsTimerStore(defaults: defaults, key: "snapshot")
     check(store.load() == nil, "empty store should load nil")
 
-    let saved = TimerSnapshot(dayKey: "2026-01-15", counted: 123.5, isRunning: true)
+    let saved = TimerSnapshot(dayKey: "2026-01-15", counted: 30000, isRunning: true)
     store.save(saved)
 
     checkEqual(store.load(), saved, "store round trip")
@@ -357,13 +405,15 @@ testResumedTimerCountsElapsedTime()
 testPauseFreezesCountedTime()
 testLongGapIsClampedInsteadOfConsumingTheBudget()
 testSynchronizeAnchorsClockWithoutCountingGap()
-testTimerStopsAtZeroAndCannotResume()
+testRunningPastBudgetGoesNegative()
+testFirstOverrunMinuteStillShowsZero()
+testPausedOverrunCanResume()
 testManualResetRefillsAndPauses()
 testSpentTracksBudgetUsed()
 testSubtractMinutesCountsAsSpent()
 testSubtractIncreasesSpentTime()
 testSubtractWhileRunningKeepsRunning()
-testSubtractingMoreThanRemainingFinishesAndStops()
+testSubtractingPastZeroGoesNegative()
 testNonPositiveSubtractIsIgnored()
 testMidnightRolloverRefillsAndPauses()
 testSpentMinutesRoundDown()

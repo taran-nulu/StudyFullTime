@@ -129,14 +129,17 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             statusItem.button?.attributedTitle = attributedTitle(for: title)
         }
 
-        headerItem.title = timer.isFinished
-            ? "Time's up for today"
-            : "\(timer.minutesRemaining) min remaining today"
+        let minutes = timer.minutesRemaining
+        if minutes > 0 {
+            headerItem.title = "\(minutes) min remaining today"
+        } else if minutes < 0 {
+            headerItem.title = "Over by \(-minutes) min"
+        } else {
+            headerItem.title = "Time's up for today"
+        }
         spentItem.title = "Time spent today: \(timer.spentMinutes) min"
 
         toggleItem.title = timer.isRunning ? "Pause" : "Resume"
-        toggleItem.isEnabled = !timer.isFinished
-        subtractItem.isEnabled = !timer.isFinished
     }
 
     private func attributedTitle(for text: String) -> NSAttributedString {

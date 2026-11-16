@@ -8,15 +8,15 @@ starts each new day paused.
 
 ## Behavior
 
-- **8 hours per day.** The countdown shows minutes only (`480m` → `479m` → … → `0m`), rounded up.
+- **8 hours per day.** The countdown shows minutes only (`480m` → `479m` → … → `0m`), rounded up. If the timer keeps running past the budget, it goes negative (`-1m`, `-2m`, …).
 - **Pause / resume** from the dropdown menu, or reset today's timer back to `480m`.
-- **Subtract time on demand.** Choose **Subtract Minutes...**, enter any positive number of minutes, and that time is marked as used. Subtracting more than what remains stops the timer at `0m`.
-- **Time spent today.** The dropdown shows the total budget used today, in whole minutes. Manually subtracted minutes count here too, so subtracting 230 minutes immediately shows `230 min` spent while reducing the remaining time.
+- **Subtract time on demand.** Choose **Subtract Minutes...**, enter any positive number of minutes, and that time is marked as used. Subtracting more than what remains can also push the countdown negative.
+- **Time spent today.** The dropdown shows the total budget used today, in whole minutes. Manually subtracted minutes count here too, so subtracting 230 minutes immediately shows `230 min` spent while reducing the remaining time. It can exceed 480 minutes.
 - **Resets at midnight** to a full, paused budget. It also resets when the app notices the calendar day changed while running.
 - **Only counts while the Mac is awake and the app is running.** Sleep gaps and time with the app quit do not consume the budget.
 - **Persists across restarts.** The counted time and paused/running state are saved in `UserDefaults`, so relaunching within the same day picks up where you left off.
 - No Dock icon or app switcher entry; it lives only in the menu bar.
-- When the budget reaches zero it stays at `0m` until midnight or a manual reset.
+- The timer never stops itself at zero. Negative time only appears after a full minute of overrun, and a paused overrun timer can be resumed.
 
 ## Build and run
 
