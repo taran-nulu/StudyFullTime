@@ -90,18 +90,26 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         toggleItem.target = self
         toggleItem.action = #selector(toggleTimer)
+        toggleItem.keyEquivalent = "p"
+        toggleItem.keyEquivalentModifierMask = .command
         menu.addItem(toggleItem)
 
         addItem.target = self
         addItem.action = #selector(addMinutes)
+        addItem.keyEquivalent = "a"
+        addItem.keyEquivalentModifierMask = .command
         menu.addItem(addItem)
 
         subtractItem.target = self
         subtractItem.action = #selector(subtractMinutes)
+        subtractItem.keyEquivalent = "s"
+        subtractItem.keyEquivalentModifierMask = .command
         menu.addItem(subtractItem)
 
         resetItem.target = self
         resetItem.action = #selector(resetTimer)
+        resetItem.keyEquivalent = "r"
+        resetItem.keyEquivalentModifierMask = .command
         menu.addItem(resetItem)
 
         menu.addItem(.separator())
@@ -109,6 +117,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let quitItem = NSMenuItem(title: "Quit StudyFullTime",
                                   action: #selector(quit),
                                   keyEquivalent: "q")
+        quitItem.keyEquivalentModifierMask = .command
         quitItem.target = self
         menu.addItem(quitItem)
 

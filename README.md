@@ -19,6 +19,18 @@ starts each new day paused.
 - No Dock icon or app switcher entry; it lives only in the menu bar.
 - The timer never stops itself at zero. Negative time only appears after a full minute of overrun, and a paused overrun timer can be resumed.
 
+## Keyboard shortcuts
+
+While the dropdown menu is open:
+
+| Action | Shortcut |
+| --- | --- |
+| Pause / Resume | ⌘P |
+| Add minutes | ⌘A |
+| Subtract minutes | ⌘S |
+| Reset today's timer | ⌘R |
+| Quit | ⌘Q |
+
 ## Build and run
 
 Requires macOS 11+ and the Xcode Command Line Tools (`xcode-select --install`).
