@@ -11,7 +11,8 @@ starts each new day paused.
 - **8 hours per day.** The countdown shows minutes only (`480m` → `479m` → … → `0m`), rounded up. If the timer keeps running past the budget, it goes negative (`-1m`, `-2m`, …).
 - **Pause / resume** from the dropdown menu, or reset today's timer back to `480m`. The menu bar icon changes with the state: an hourglass while running and `moon.zzz` while paused.
 - **Subtract time on demand.** Choose **Subtract Minutes...**, enter any positive number of minutes, and that time is marked as used. Subtracting more than what remains can also push the countdown negative.
-- **Time spent today.** The dropdown shows the total budget used today, in whole minutes. Manually subtracted minutes count here too, so subtracting 230 minutes immediately shows `230 min` spent while reducing the remaining time. It can exceed 480 minutes.
+- **Add time on demand.** Choose **Add Minutes...**, enter any positive number of minutes, and the remaining time increases immediately. Additions can take the countdown above the original 480-minute budget and never change time spent.
+- **Time spent today.** The dropdown shows total spent time in whole minutes: running time plus manual subtractions. Manually added minutes are excluded, so adding time never lowers the spent figure. It can exceed 480 minutes.
 - **Resets at midnight** to a full, paused budget. It also resets when the app notices the calendar day changed while running.
 - **Only counts while the Mac is awake and the app is running.** Sleep gaps and time with the app quit do not consume the budget.
 - **Persists across restarts.** The counted time and paused/running state are saved in `UserDefaults`, so relaunching within the same day picks up where you left off.

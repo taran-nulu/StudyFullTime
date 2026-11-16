@@ -4,15 +4,58 @@ import Foundation
 public struct TimerSnapshot: Codable, Equatable {
     /// Local calendar day the snapshot belongs to, formatted as `yyyy-MM-dd`.
     public var dayKey: String
-    /// Seconds counted against the daily budget so far, including manual subtractions.
+    /// Seconds counted against the daily budget, including manual subtractions
+    /// and credits from manual additions. May be negative after additions.
     public var counted: TimeInterval
+    /// Seconds recorded as spent: running time plus manual subtractions.
+    /// Additions never change this value.
+    public var spent: TimeInterval
     /// Whether the timer was counting down when the snapshot was taken.
     public var isRunning: Bool
 
-    public init(dayKey: String, counted: TimeInterval, isRunning: Bool) {
+    public init(dayKey: String,
+                counted: TimeInterval,
+                spent: TimeInterval? = nil,
+                isRunning: Bool) {
         self.dayKey = dayKey
         self.counted = counted
+        self.spent = spent ?? max(0, counted)
         self.isRunning = isRunning
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case version, dayKey, counted, spent, isRunning
+    }
+
+    /// Version 3 stores `spent` independently of `counted`. Older snapshots
+    /// had no additions, so their counted time is also their spent time.
+    private static let currentSchemaVersion = 3
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 0
+        let decodedCounted = try container.decode(TimeInterval.self, forKey: .counted)
+        let decodedSpent = try container.decodeIfPresent(TimeInterval.self, forKey: .spent)
+
+        dayKey = try container.decode(String.self, forKey: .dayKey)
+        counted = decodedCounted
+        if version >= TimerSnapshot.currentSchemaVersion {
+            spent = max(0, decodedSpent ?? decodedCounted)
+        } else {
+            // Older formats did not support additions and counted subtractions
+            // as spent, so counted is the best available value.
+            spent = max(0, decodedCounted)
+        }
+        isRunning = try container.decode(Bool.self, forKey: .isRunning)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(TimerSnapshot.currentSchemaVersion, forKey: .version)
+        try container.encode(dayKey, forKey: .dayKey)
+        try container.encode(counted, forKey: .counted)
+        try container.encode(spent, forKey: .spent)
+        try container.encode(isRunning, forKey: .isRunning)
     }
 }
 
@@ -31,6 +74,8 @@ public struct DailyTimer {
     private static let maximumTickGap: TimeInterval = 2
 
     public private(set) var counted: TimeInterval
+    /// Time recorded as spent: running time plus manual subtractions.
+    public private(set) var spent: TimeInterval
     public private(set) var isRunning: Bool
     public private(set) var dayKey: String
     private var lastTick: Date
@@ -41,11 +86,13 @@ public struct DailyTimer {
         self.lastTick = now
 
         if let snapshot = snapshot, snapshot.dayKey == key {
-            self.counted = max(snapshot.counted, 0)
+            self.counted = snapshot.counted
+            self.spent = max(snapshot.spent, 0)
             self.isRunning = snapshot.isRunning
         } else {
             // First launch of the day, or the saved state is from another day.
             self.counted = 0
+            self.spent = 0
             self.isRunning = false
         }
     }
@@ -71,10 +118,10 @@ public struct DailyTimer {
         DailyTimer.minutesText(from: remaining)
     }
 
-    /// Whole minutes recorded against today's budget, including manual
-    /// subtractions, rounded down. Can exceed 480.
+    /// Whole minutes recorded as spent, including manual subtractions but not
+    /// manual additions, rounded down. Can exceed 480.
     public var spentMinutes: Int {
-        Int(max(0, counted) / 60)
+        Int(max(0, spent) / 60)
     }
 
     public static func minutes(from remaining: TimeInterval) -> Int {
@@ -114,6 +161,7 @@ public struct DailyTimer {
 
         let gap = min(delta, DailyTimer.maximumTickGap)
         counted += gap
+        spent += gap
     }
 
     /// Starts a fresh day if `now` falls on a different calendar day.
@@ -125,6 +173,7 @@ public struct DailyTimer {
 
         dayKey = key
         counted = 0
+        spent = 0
         isRunning = false
         lastTick = now
         return true
@@ -143,8 +192,18 @@ public struct DailyTimer {
     /// Refills the budget for today and leaves the timer paused.
     public mutating func reset(now: Date, calendar: Calendar = .current) {
         counted = 0
+        spent = 0
         isRunning = false
         dayKey = DailyTimer.dayKey(for: now, calendar: calendar)
+        lastTick = now
+    }
+
+    /// Adds time back to today's remaining budget. Additions do not count as
+    /// time spent and can raise the remaining time above the daily budget.
+    public mutating func add(minutes: Int, now: Date) {
+        guard minutes > 0 else { return }
+
+        counted -= TimeInterval(minutes) * 60
         lastTick = now
     }
 
@@ -153,7 +212,9 @@ public struct DailyTimer {
     public mutating func subtract(minutes: Int, now: Date) {
         guard minutes > 0 else { return }
 
-        counted += TimeInterval(minutes) * 60
+        let amount = TimeInterval(minutes) * 60
+        counted += amount
+        spent += amount
         lastTick = now
     }
 
@@ -165,6 +226,6 @@ public struct DailyTimer {
     }
 
     public func snapshot() -> TimerSnapshot {
-        TimerSnapshot(dayKey: dayKey, counted: counted, isRunning: isRunning)
+        TimerSnapshot(dayKey: dayKey, counted: counted, spent: spent, isRunning: isRunning)
     }
 }

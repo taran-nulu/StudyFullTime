@@ -9,6 +9,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let headerItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let spentItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let toggleItem = NSMenuItem(title: "Pause", action: nil, keyEquivalent: "")
+    private let addItem = NSMenuItem(title: "Add Minutes...", action: nil, keyEquivalent: "")
     private let subtractItem = NSMenuItem(title: "Subtract Minutes...", action: nil, keyEquivalent: "")
     private let resetItem = NSMenuItem(title: "Reset Today's Timer", action: nil, keyEquivalent: "")
 
@@ -90,6 +91,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         toggleItem.target = self
         toggleItem.action = #selector(toggleTimer)
         menu.addItem(toggleItem)
+
+        addItem.target = self
+        addItem.action = #selector(addMinutes)
+        menu.addItem(addItem)
 
         subtractItem.target = self
         subtractItem.action = #selector(subtractMinutes)
@@ -180,14 +185,33 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         refresh()
     }
 
+    @objc private func addMinutes() {
+        promptForMinutes(title: "Add Minutes",
+                         message: "Enter how many minutes to add to today's remaining time.",
+                         buttonTitle: "Add") { minutes, now in
+            self.timer.add(minutes: minutes, now: now)
+        }
+    }
+
     @objc private func subtractMinutes() {
+        promptForMinutes(title: "Subtract Minutes",
+                         message: "Enter how many minutes to subtract from today's remaining time.",
+                         buttonTitle: "Subtract") { minutes, now in
+            self.timer.subtract(minutes: minutes, now: now)
+        }
+    }
+
+    private func promptForMinutes(title: String,
+                                  message: String,
+                                  buttonTitle: String,
+                                  apply: (Int, Date) -> Void) {
         NSApp.activate(ignoringOtherApps: true)
 
         let alert = NSAlert()
-        alert.messageText = "Subtract Minutes"
-        alert.informativeText = "Enter how many minutes to subtract from today's remaining time."
+        alert.messageText = title
+        alert.informativeText = message
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "Subtract")
+        alert.addButton(withTitle: buttonTitle)
         alert.addButton(withTitle: "Cancel")
 
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
@@ -203,7 +227,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             return
         }
 
-        timer.subtract(minutes: minutes, now: Date())
+        apply(minutes, Date())
         persist()
         refresh()
     }

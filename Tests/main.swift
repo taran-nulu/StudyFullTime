@@ -271,6 +271,63 @@ private func testSubtractWhileRunningKeepsRunning() {
     checkEqual(timer.counted, 301, accuracy: 0.001, "counted after subtraction")
 }
 
+private func testAddMinutesIncreasesRemainingWithoutSpending() {
+    let now = date(2026, 1, 15, 9, 0)
+    var timer = DailyTimer(snapshot: nil, now: now, calendar: calendar)
+
+    timer.add(minutes: 30, now: now)
+
+    checkEqual(timer.counted, -1800, accuracy: 0.001, "added counted")
+    checkEqual(timer.remaining, 30600, accuracy: 0.001, "added remaining")
+    checkEqual(timer.displayText, "510m", "added display")
+    checkEqual(timer.spentMinutes, 0, "adding must not spend time")
+    check(!timer.isRunning, "adding must not start a paused timer")
+}
+
+private func testAddMinutesDoesNotChangeSpentTime() {
+    let now = date(2026, 1, 15, 9, 0)
+    let key = DailyTimer.dayKey(for: now, calendar: calendar)
+    let saved = TimerSnapshot(dayKey: key, counted: 600,
+                              spent: 600, isRunning: true)
+    var timer = DailyTimer(snapshot: saved, now: now, calendar: calendar)
+
+    timer.add(minutes: 20, now: now)
+
+    checkEqual(timer.counted, -600, accuracy: 0.001, "counted after add")
+    checkEqual(timer.spent, 600, accuracy: 0.001, "spent after add")
+    checkEqual(timer.spentMinutes, 10, "spent minutes after add")
+    checkEqual(timer.remaining, 29400, accuracy: 0.001, "remaining after add")
+    check(timer.isRunning, "adding should not pause a running timer")
+
+    timer.tick(now: now.addingTimeInterval(1), calendar: calendar)
+    checkEqual(timer.counted, -599, accuracy: 0.001, "counted after add tick")
+    checkEqual(timer.spent, 601, accuracy: 0.001, "spent after add tick")
+}
+
+private func testAddAndSubtractKeepSpentIndependent() {
+    let now = date(2026, 1, 15, 9, 0)
+    var timer = DailyTimer(snapshot: nil, now: now, calendar: calendar)
+
+    timer.add(minutes: 60, now: now)
+    timer.subtract(minutes: 30, now: now)
+
+    checkEqual(timer.counted, -1800, accuracy: 0.001, "net counted")
+    checkEqual(timer.displayText, "510m", "net display")
+    checkEqual(timer.spentMinutes, 30, "net spent minutes")
+}
+
+private func testNonPositiveAddIsIgnored() {
+    let now = date(2026, 1, 15, 9, 0)
+    var timer = DailyTimer(snapshot: nil, now: now, calendar: calendar)
+
+    timer.add(minutes: 0, now: now)
+    timer.add(minutes: -25, now: now)
+
+    checkEqual(timer.counted, 0, accuracy: 0.001, "ignored addition")
+    checkEqual(timer.displayText, "480m", "ignored addition display")
+    checkEqual(timer.spentMinutes, 0, "ignored addition spent")
+}
+
 private func testSubtractingPastZeroGoesNegative() {
     let now = date(2026, 1, 15, 9, 0)
     let fullDay = snapshot(counted: 28800, running: false, on: now)
@@ -357,6 +414,17 @@ private func testSnapshotWithOldSpentFieldShowsCountedMinutes() {
     checkEqual(timer.spentMinutes, 230, "old snapshot spent minutes")
 }
 
+private func testVersionedSnapshotPreservesIndependentSpent() {
+    let original = TimerSnapshot(dayKey: "2026-01-15", counted: -1800,
+                                 spent: 600, isRunning: true)
+    let data = try! JSONEncoder().encode(original)
+    let decoded = try! JSONDecoder().decode(TimerSnapshot.self, from: data)
+
+    checkEqual(decoded.counted, -1800, accuracy: 0.001, "versioned counted")
+    checkEqual(decoded.spent, 600, accuracy: 0.001, "versioned spent")
+    check(decoded.isRunning, "versioned running flag")
+}
+
 private func testMinutesRoundUpAndCollapseAtZero() {
     checkEqual(DailyTimer.minutes(from: 28800), 480, "28800s")
     checkEqual(DailyTimer.minutes(from: 28799), 480, "28799s")
@@ -414,11 +482,16 @@ testSubtractMinutesCountsAsSpent()
 testSubtractIncreasesSpentTime()
 testSubtractWhileRunningKeepsRunning()
 testSubtractingPastZeroGoesNegative()
+testAddMinutesIncreasesRemainingWithoutSpending()
+testAddMinutesDoesNotChangeSpentTime()
+testAddAndSubtractKeepSpentIndependent()
+testNonPositiveAddIsIgnored()
 testNonPositiveSubtractIsIgnored()
 testMidnightRolloverRefillsAndPauses()
 testSpentMinutesRoundDown()
 testLegacySnapshotWithoutSpentKeyStillLoads()
 testSnapshotWithOldSpentFieldShowsCountedMinutes()
+testVersionedSnapshotPreservesIndependentSpent()
 testMinutesRoundUpAndCollapseAtZero()
 testDisplayTextUsesMinutesOnly()
 testStoreRoundTrip()
