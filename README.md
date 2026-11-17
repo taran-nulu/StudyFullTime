@@ -34,6 +34,8 @@ While the dropdown menu is open:
 | Reset today's timer | ⌘R |
 | Quit | ⌘Q |
 
+From any app: **⌃⌥M** opens the StudyFullTime menu without clicking the icon, and pressing it again closes the menu. It uses a system-wide hotkey, so no Accessibility permission is required.
+
 ## Build and run
 
 Requires macOS 11+ and the Xcode Command Line Tools (`xcode-select --install`).
@@ -78,6 +80,7 @@ Sources/StudyTimerCore/TimerStore.swift       UserDefaults persistence
 Sources/StudyTimerCore/TaskStore.swift        task persistence
 Sources/StudyFullTime/main.swift              AppKit entry point
 Sources/StudyFullTime/AppDelegate.swift       app lifecycle
+Sources/StudyFullTime/GlobalHotKey.swift      system-wide shortcut support
 Sources/StudyFullTime/StatusItemController.swift  menu bar item and menu
 Sources/StudyFullTime/TasksWindowController.swift task window UI
 Tests/main.swift                              standalone timer-core checks

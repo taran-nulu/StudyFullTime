@@ -13,6 +13,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let spentItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let zeroCountItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let streakItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let shortcutItem = NSMenuItem(title: "Open/close menu",
+                                          action: nil,
+                                          keyEquivalent: "")
+    /// Hidden item that actually handles ⌃⌥M while the menu is open. The
+    /// visible row above is disabled, so it only displays the shortcut.
+    private let closeMenuShortcutItem = NSMenuItem(title: "Close Menu",
+                                                   action: nil,
+                                                   keyEquivalent: "")
     private let tasksItem = NSMenuItem(title: "Tasks…", action: nil, keyEquivalent: "")
     private let toggleItem = NSMenuItem(title: "Pause", action: nil, keyEquivalent: "")
     private let addItem = NSMenuItem(title: "Add Minutes...", action: nil, keyEquivalent: "")
@@ -20,9 +28,23 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let resetItem = NSMenuItem(title: "Reset Today's Timer", action: nil, keyEquivalent: "")
 
     private var ticker: Timer?
+    private let globalHotKey = GlobalHotKey()
+    private lazy var menuShortcutMonitor = MenuShortcutMonitor(
+        matches: { event in
+            let flags = event.modifierFlags
+                .intersection(.deviceIndependentFlagsMask)
+                .subtracting([.capsLock, .numericPad])
+            return event.keyCode == UInt16(GlobalHotKey.controlOptionMKeyCode)
+                && flags == [.control, .option]
+        },
+        action: { [weak self] in
+            self?.menu.cancelTracking()
+        })
     private var lastTitle = ""
     private var lastSymbolName: String?
     private var lastPersistDate = Date.distantPast
+    private var isMenuOpen = false
+    private var lastMenuCloseDate = Date.distantPast
 
     init(timer: DailyTimer,
          store: TimerStateStore,
@@ -45,6 +67,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     func start() {
         registerObservers()
+        registerGlobalHotKey()
         refresh()
         persist()
         persistTasks()
@@ -67,6 +90,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     /// Stops any running task (pause-on-quit) and saves everything.
     func shutdown() {
+        menuShortcutMonitor.stop()
+        globalHotKey.unregister()
         tasks.stopAll(now: Date())
         persist()
         persistTasks()
@@ -153,6 +178,19 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        closeMenuShortcutItem.target = self
+        closeMenuShortcutItem.action = #selector(closeMenuShortcut)
+        closeMenuShortcutItem.keyEquivalent = "m"
+        closeMenuShortcutItem.keyEquivalentModifierMask = [.control, .option]
+        closeMenuShortcutItem.isHidden = true
+        closeMenuShortcutItem.allowsKeyEquivalentWhenHidden = true
+        menu.addItem(closeMenuShortcutItem)
+
+        shortcutItem.isEnabled = false
+        shortcutItem.keyEquivalent = "m"
+        shortcutItem.keyEquivalentModifierMask = [.control, .option]
+        menu.addItem(shortcutItem)
+
         let quitItem = NSMenuItem(title: "Quit StudyFullTime",
                                   action: #selector(quit),
                                   keyEquivalent: "q")
@@ -177,6 +215,44 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                                                selector: #selector(dayDidChange),
                                                name: .NSCalendarDayChanged,
                                                object: nil)
+    }
+
+    private func registerGlobalHotKey() {
+        let registered = globalHotKey.register(
+            keyCode: GlobalHotKey.controlOptionMKeyCode,
+            modifiers: GlobalHotKey.controlOptionMModifiers
+        ) { [weak self] in
+            self?.openMenuFromHotKey()
+        }
+
+        if !registered {
+            NSLog("StudyFullTime: could not register the Control-Option-M shortcut")
+        }
+    }
+
+    /// Opens the same dropdown the status item shows when clicked, or closes
+    /// it when the menu is already open.
+    private func openMenuFromHotKey() {
+        if isMenuOpen {
+            statusItem.menu?.cancelTracking()
+            return
+        }
+
+        // Delivering the hotkey makes the system dismiss an open menu, and
+        // this handler can run just after that. Don't immediately reopen it.
+        if Date().timeIntervalSince(lastMenuCloseDate) < 0.3 {
+            return
+        }
+
+        NSApp.activate(ignoringOtherApps: true)
+
+        if let button = statusItem.button, button.window != nil {
+            button.performClick(nil)
+            return
+        }
+
+        guard let menu = statusItem.menu else { return }
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 
     // MARK: - Ticking
@@ -258,6 +334,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         tasksWindowController?.showWindow(nil)
         tasksWindowController?.window?.makeKeyAndOrderFront(nil)
         tasksWindowController?.refresh()
+    }
+
+    @objc private func closeMenuShortcut() {
+        statusItem.menu?.cancelTracking()
     }
 
     @objc private func toggleTimer() {
@@ -352,7 +432,19 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     // MARK: - NSMenuDelegate
 
     func menuWillOpen(_ menu: NSMenu) {
+        isMenuOpen = true
+        // Carbon hotkeys are not delivered while the menu tracks, so hand the
+        // shortcut over to a raw key monitor until the menu closes.
+        globalHotKey.suspend()
+        menuShortcutMonitor.start()
         refresh()
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        isMenuOpen = false
+        menuShortcutMonitor.stop()
+        globalHotKey.resume()
+        lastMenuCloseDate = Date()
     }
 }
 
