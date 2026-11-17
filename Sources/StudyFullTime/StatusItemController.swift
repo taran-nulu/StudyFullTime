@@ -500,4 +500,8 @@ extension StatusItemController: TasksWindowControllerDelegate {
         persistTasks()
         refresh()
     }
+
+    func tasksWindowDidToggleTimer() {
+        toggleTimer()
+    }
 }

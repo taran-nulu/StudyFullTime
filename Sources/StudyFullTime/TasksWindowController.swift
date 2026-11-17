@@ -4,16 +4,28 @@ private final class FlippedView: NSView {
     override var isFlipped: Bool { true }
 }
 
-/// The task window closes itself on ⌘W even though the app has no main menu.
+/// The task window closes itself on ⌘W and toggles the study timer on ⌘P even
+/// though the app has no main menu.
 private final class TasksWindow: NSWindow {
+    var onToggleTimer: (() -> Void)?
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection([.command, .option, .control, .shift])
-        if flags == .command,
-           event.charactersIgnoringModifiers?.lowercased() == "w" {
+        guard flags == .command,
+              let key = event.charactersIgnoringModifiers?.lowercased() else {
+            return super.performKeyEquivalent(with: event)
+        }
+
+        switch key {
+        case "w":
             performClose(nil)
             return true
+        case "p":
+            onToggleTimer?()
+            return true
+        default:
+            return super.performKeyEquivalent(with: event)
         }
-        return super.performKeyEquivalent(with: event)
     }
 }
 
@@ -27,6 +39,7 @@ protocol TasksWindowControllerDelegate: AnyObject {
     func tasksWindowDidStop(id: UUID)
     func tasksWindowDidClearCompleted()
     func tasksWindowDidDeleteAll()
+    func tasksWindowDidToggleTimer()
 }
 
 /// A reusable window that lists tasks and exposes add, complete, delete,
@@ -56,6 +69,9 @@ final class TasksWindowController: NSWindowController {
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 380, height: 280)
         super.init(window: window)
+        window.onToggleTimer = { [weak self] in
+            self?.delegate?.tasksWindowDidToggleTimer()
+        }
         window.setFrameAutosaveName("StudyFullTime.TasksWindow")
         window.center()
         buildContent()

@@ -34,6 +34,8 @@ While the dropdown menu is open:
 | Reset today's timer | ⌘R |
 | Quit | ⌘Q |
 
+While the Tasks window is focused, **⌘P** pauses or resumes the study timer and **⌘W** closes the window.
+
 From any app: **⌃⌥M** opens the StudyFullTime menu without clicking the icon, and pressing it again closes the menu. It uses a system-wide hotkey, so no Accessibility permission is required.
 
 ## Build and run
