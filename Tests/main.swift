@@ -824,6 +824,120 @@ private func testLegacySnapshotWithoutBudgetUsesDefault() {
     checkEqual(timer.displayText, "470m", "legacy display uses default budget")
 }
 
+private func testLifetimeSpentAccumulatesAcrossTicks() {
+    let now = date(2026, 1, 15, 9, 0)
+    var timer = DailyTimer(snapshot: nil, now: now, calendar: calendar)
+    timer.setRunning(true, now: now)
+
+    timer.tick(now: now.addingTimeInterval(1), calendar: calendar)
+    timer.tick(now: now.addingTimeInterval(2), calendar: calendar)
+
+    checkEqual(timer.spent, 2, accuracy: 0.001, "today spent after ticks")
+    checkEqual(timer.lifetimeSpent, 2, accuracy: 0.001, "lifetime spent after ticks")
+    checkEqual(timer.lifetimeSpentMinutes, 0, "lifetime minutes round down")
+}
+
+private func testLifetimeSpentSurvivesDayRollover() {
+    let dayOne = date(2026, 1, 15, 23, 59)
+    let saved = TimerSnapshot(dayKey: DailyTimer.dayKey(for: dayOne, calendar: calendar),
+                              counted: 600,
+                              spent: 600,
+                              lifetimeSpent: 5400,
+                              isRunning: true)
+    var timer = DailyTimer(snapshot: saved, now: dayOne, calendar: calendar)
+
+    timer.tick(now: date(2026, 1, 16, 0, 1), calendar: calendar)
+
+    checkEqual(timer.spent, 0, accuracy: 0.001, "today spent resets on rollover")
+    checkEqual(timer.lifetimeSpent, 5400, accuracy: 0.001,
+               "lifetime spent carries across days")
+}
+
+private func testSubtractAddsToLifetimeSpent() {
+    let now = date(2026, 1, 15, 9, 0)
+    var timer = DailyTimer(snapshot: nil, now: now, calendar: calendar)
+
+    timer.subtract(minutes: 25, now: now, calendar: calendar)
+
+    checkEqual(timer.spentMinutes, 25, "today spent after subtract")
+    checkEqual(timer.lifetimeSpentMinutes, 25, "lifetime spent after subtract")
+}
+
+private func testResetKeepsLifetimeSpent() {
+    let now = date(2026, 1, 15, 9, 0)
+    var timer = DailyTimer(snapshot: nil, now: now, calendar: calendar)
+    timer.subtract(minutes: 40, now: now, calendar: calendar)
+
+    timer.reset(now: now, calendar: calendar)
+
+    checkEqual(timer.spent, 0, accuracy: 0.001, "reset clears today spent")
+    checkEqual(timer.lifetimeSpent, 2400, accuracy: 0.001,
+               "reset keeps lifetime spent")
+}
+
+private func testLifetimeSpentPersistsInSnapshot() {
+    let original = TimerSnapshot(dayKey: "2026-01-15", counted: 120, spent: 120,
+                                 lifetimeSpent: 7200, isRunning: false)
+    let data = try! JSONEncoder().encode(original)
+    let decoded = try! JSONDecoder().decode(TimerSnapshot.self, from: data)
+
+    checkEqual(decoded.lifetimeSpent, 7200, accuracy: 0.001,
+               "lifetime spent snapshot round trip")
+}
+
+private func testLegacySnapshotWithoutLifetimeUsesTodaySpent() {
+    let json = """
+    {"dayKey":"2026-01-15","version":5,"counted":600,"spent":600,"isRunning":false}
+    """.data(using: .utf8)!
+
+    let decoded = try! JSONDecoder().decode(TimerSnapshot.self, from: json)
+
+    checkEqual(decoded.lifetimeSpent, 600, accuracy: 0.001,
+               "legacy snapshot lifetime defaults to today spent")
+}
+
+private func testDaysStudiedCountsTodayAndRollsOver() {
+    let dayOne = date(2026, 1, 15, 23, 50)
+    var timer = DailyTimer(snapshot: nil, now: dayOne, calendar: calendar)
+
+    checkEqual(timer.daysStudied, 0, "no days studied yet")
+
+    timer.subtract(minutes: 5, now: dayOne, calendar: calendar)
+    checkEqual(timer.daysStudied, 1, "today counts once time is recorded")
+    checkEqual(timer.snapshot().daysStudied, 0,
+               "completed days exclude today")
+
+    timer.tick(now: date(2026, 1, 16, 0, 1), calendar: calendar)
+    checkEqual(timer.daysStudied, 1, "yesterday is now a completed day")
+    checkEqual(timer.snapshot().daysStudied, 1,
+               "completed days persist after rollover")
+}
+
+private func testDaysStudiedCountsPreviousDayOnLaunch() {
+    let dayOne = date(2026, 1, 15, 20, 0)
+    let saved = TimerSnapshot(dayKey: DailyTimer.dayKey(for: dayOne, calendar: calendar),
+                              counted: 600,
+                              spent: 600,
+                              lifetimeSpent: 600,
+                              isRunning: false)
+
+    let timer = DailyTimer(snapshot: saved,
+                           now: date(2026, 1, 16, 9, 0),
+                           calendar: calendar)
+
+    checkEqual(timer.daysStudied, 1, "previous study day counts after launch")
+}
+
+private func testDaysStudiedPersistsInSnapshot() {
+    let original = TimerSnapshot(dayKey: "2026-01-15", counted: 120, spent: 120,
+                                 lifetimeSpent: 7200, isRunning: false,
+                                 daysStudied: 12)
+    let data = try! JSONEncoder().encode(original)
+    let decoded = try! JSONDecoder().decode(TimerSnapshot.self, from: data)
+
+    checkEqual(decoded.daysStudied, 12, "days studied snapshot round trip")
+}
+
 // MARK: - Runner
 
 testFreshDayStartsFullAndPaused()
@@ -877,6 +991,15 @@ testTaskSnapshotSurvivesJSONRoundTrip()
 testChangingBudgetRecomputesRemaining()
 testBudgetPersistsInSnapshot()
 testLegacySnapshotWithoutBudgetUsesDefault()
+testLifetimeSpentAccumulatesAcrossTicks()
+testLifetimeSpentSurvivesDayRollover()
+testSubtractAddsToLifetimeSpent()
+testResetKeepsLifetimeSpent()
+testLifetimeSpentPersistsInSnapshot()
+testLegacySnapshotWithoutLifetimeUsesTodaySpent()
+testDaysStudiedCountsTodayAndRollsOver()
+testDaysStudiedCountsPreviousDayOnLaunch()
+testDaysStudiedPersistsInSnapshot()
 
 if failures == 0 {
     print("All \(checks) checks passed.")

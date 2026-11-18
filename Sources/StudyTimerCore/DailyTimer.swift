@@ -10,6 +10,8 @@ public struct TimerSnapshot: Codable, Equatable {
     /// Seconds recorded as spent: running time plus manual subtractions.
     /// Additions never change this value.
     public var spent: TimeInterval
+    /// Seconds spent studying across every day this app has tracked.
+    public var lifetimeSpent: TimeInterval
     /// The daily budget in seconds that `counted` is measured against.
     public var budget: TimeInterval
     /// Whether the timer was counting down when the snapshot was taken.
@@ -23,34 +25,41 @@ public struct TimerSnapshot: Codable, Equatable {
     public var longestStreak: Int
     /// Most recent day on which zero was reached, formatted `yyyy-MM-dd`.
     public var lastZeroDayKey: String?
+    /// Completed days before today that recorded any study time.
+    public var daysStudied: Int
 
     public init(dayKey: String,
                 counted: TimeInterval,
                 spent: TimeInterval? = nil,
+                lifetimeSpent: TimeInterval? = nil,
                 budget: TimeInterval = DailyTimer.dailyBudget,
                 isRunning: Bool,
                 timesReachedZero: Int = 0,
                 currentStreak: Int = 0,
                 longestStreak: Int = 0,
-                lastZeroDayKey: String? = nil) {
+                lastZeroDayKey: String? = nil,
+                daysStudied: Int = 0) {
         self.dayKey = dayKey
         self.counted = counted
-        self.spent = spent ?? max(0, counted)
+        let resolvedSpent = spent ?? max(0, counted)
+        self.spent = resolvedSpent
+        self.lifetimeSpent = max(0, lifetimeSpent ?? resolvedSpent)
         self.budget = budget
         self.isRunning = isRunning
         self.timesReachedZero = timesReachedZero
         self.currentStreak = currentStreak
         self.longestStreak = longestStreak
         self.lastZeroDayKey = lastZeroDayKey
+        self.daysStudied = max(0, daysStudied)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case version, dayKey, counted, spent, budget, isRunning
-        case timesReachedZero, currentStreak, longestStreak, lastZeroDayKey
+        case version, dayKey, counted, spent, lifetimeSpent, budget, isRunning
+        case timesReachedZero, currentStreak, longestStreak, lastZeroDayKey, daysStudied
     }
 
-    /// Version 5 makes the daily budget configurable.
-    private static let currentSchemaVersion = 5
+    /// Version 7 adds the count of studied days.
+    private static let currentSchemaVersion = 7
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -60,15 +69,20 @@ public struct TimerSnapshot: Codable, Equatable {
 
         dayKey = try container.decode(String.self, forKey: .dayKey)
         counted = decodedCounted
-        budget = max(60, try container.decodeIfPresent(TimeInterval.self,
-                                                       forKey: .budget) ?? DailyTimer.dailyBudget)
+        let resolvedSpent: TimeInterval
         if version >= 3 {
-            spent = max(0, decodedSpent ?? decodedCounted)
+            resolvedSpent = max(0, decodedSpent ?? decodedCounted)
         } else {
             // Older formats did not support additions and counted subtractions
             // as spent, so counted is the best available value.
-            spent = max(0, decodedCounted)
+            resolvedSpent = max(0, decodedCounted)
         }
+        spent = resolvedSpent
+        lifetimeSpent = max(0, try container.decodeIfPresent(TimeInterval.self,
+                                                             forKey: .lifetimeSpent)
+                                ?? resolvedSpent)
+        budget = max(60, try container.decodeIfPresent(TimeInterval.self,
+                                                       forKey: .budget) ?? DailyTimer.dailyBudget)
         isRunning = try container.decode(Bool.self, forKey: .isRunning)
         timesReachedZero = max(0, try container.decodeIfPresent(Int.self,
                                                                forKey: .timesReachedZero) ?? 0)
@@ -77,6 +91,8 @@ public struct TimerSnapshot: Codable, Equatable {
         longestStreak = max(0, try container.decodeIfPresent(Int.self,
                                                             forKey: .longestStreak) ?? 0)
         lastZeroDayKey = try container.decodeIfPresent(String.self, forKey: .lastZeroDayKey)
+        daysStudied = max(0, try container.decodeIfPresent(Int.self,
+                                                           forKey: .daysStudied) ?? 0)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -85,12 +101,14 @@ public struct TimerSnapshot: Codable, Equatable {
         try container.encode(dayKey, forKey: .dayKey)
         try container.encode(counted, forKey: .counted)
         try container.encode(spent, forKey: .spent)
+        try container.encode(lifetimeSpent, forKey: .lifetimeSpent)
         try container.encode(budget, forKey: .budget)
         try container.encode(isRunning, forKey: .isRunning)
         try container.encode(timesReachedZero, forKey: .timesReachedZero)
         try container.encode(currentStreak, forKey: .currentStreak)
         try container.encode(longestStreak, forKey: .longestStreak)
         try container.encodeIfPresent(lastZeroDayKey, forKey: .lastZeroDayKey)
+        try container.encode(daysStudied, forKey: .daysStudied)
     }
 }
 
@@ -112,6 +130,10 @@ public struct DailyTimer {
     public private(set) var counted: TimeInterval
     /// Time recorded as spent: running time plus manual subtractions.
     public private(set) var spent: TimeInterval
+    /// All-time time spent studying, accumulated across days.
+    public private(set) var lifetimeSpent: TimeInterval
+    /// Days before today that recorded study time.
+    public private(set) var completedStudyDays: Int
     /// The budget in seconds that `counted` is measured against.
     public private(set) var budget: TimeInterval
     public private(set) var isRunning: Bool
@@ -130,6 +152,16 @@ public struct DailyTimer {
         self.dayKey = key
         self.lastTick = now
         self.budget = max(60, snapshot?.budget ?? DailyTimer.dailyBudget)
+        self.lifetimeSpent = max(snapshot?.lifetimeSpent ?? 0, 0)
+
+        let restoredStudyDays = max(snapshot?.daysStudied ?? 0, 0)
+        if let snapshot = snapshot, snapshot.dayKey != key, snapshot.spent > 0 {
+            // The app was closed on a day that recorded study time, so count
+            // that day before starting fresh.
+            self.completedStudyDays = restoredStudyDays + 1
+        } else {
+            self.completedStudyDays = restoredStudyDays
+        }
 
         let restoredCurrentStreak = max(snapshot?.currentStreak ?? 0, 0)
         self.timesReachedZero = max(snapshot?.timesReachedZero ?? 0, 0)
@@ -184,6 +216,16 @@ public struct DailyTimer {
         Int(max(0, spent) / 60)
     }
 
+    /// All-time spent time in whole minutes, rounded down.
+    public var lifetimeSpentMinutes: Int {
+        Int(max(0, lifetimeSpent) / 60)
+    }
+
+    /// Days with study time, including today when any time has been recorded.
+    public var daysStudied: Int {
+        completedStudyDays + (spent > 0 ? 1 : 0)
+    }
+
     public static func minutes(from remaining: TimeInterval) -> Int {
         if remaining > 0 {
             return Int(ceil(remaining / 60))
@@ -223,6 +265,7 @@ public struct DailyTimer {
         let wasAboveZero = remaining > 0
         counted += gap
         spent += gap
+        lifetimeSpent += gap
 
         if wasAboveZero && remaining <= 0 {
             recordZeroReached(now: now, calendar: calendar)
@@ -237,6 +280,9 @@ public struct DailyTimer {
         guard key != dayKey else { return false }
 
         dayKey = key
+        if spent > 0 {
+            completedStudyDays += 1
+        }
         counted = 0
         spent = 0
         isRunning = false
@@ -292,6 +338,7 @@ public struct DailyTimer {
         let amount = TimeInterval(minutes) * 60
         counted += amount
         spent += amount
+        lifetimeSpent += amount
         lastTick = now
 
         if wasAboveZero && remaining <= 0 {
@@ -310,12 +357,14 @@ public struct DailyTimer {
         TimerSnapshot(dayKey: dayKey,
                       counted: counted,
                       spent: spent,
+                      lifetimeSpent: lifetimeSpent,
                       budget: budget,
                       isRunning: isRunning,
                       timesReachedZero: timesReachedZero,
                       currentStreak: currentStreak,
                       longestStreak: longestStreak,
-                      lastZeroDayKey: lastZeroDayKey)
+                      lastZeroDayKey: lastZeroDayKey,
+                      daysStudied: completedStudyDays)
     }
 
     // MARK: - Statistics

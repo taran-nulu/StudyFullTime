@@ -317,6 +317,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
            tasksWindowController.window?.isVisible == true {
             tasksWindowController.refresh()
         }
+
+        if let settingsWindowController = settingsWindowController,
+           settingsWindowController.window?.isVisible == true {
+            settingsWindowController.updateStats(
+                totalSpentMinutes: timer.lifetimeSpentMinutes,
+                todaySpentMinutes: timer.spentMinutes,
+                timesReachedZero: timer.timesReachedZero,
+                longestStreak: timer.longestStreak,
+                daysStudied: timer.daysStudied)
+        }
     }
 
     private func dayCount(_ count: Int) -> String {
@@ -356,7 +366,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             settingsWindowController = controller
         }
 
-        settingsWindowController?.present(budgetMinutes: timer.budgetMinutes)
+        settingsWindowController?.present(budgetMinutes: timer.budgetMinutes,
+                                          totalSpentMinutes: timer.lifetimeSpentMinutes,
+                                          todaySpentMinutes: timer.spentMinutes,
+                                          timesReachedZero: timer.timesReachedZero,
+                                          longestStreak: timer.longestStreak,
+                                          daysStudied: timer.daysStudied)
     }
 
     @objc private func closeMenuShortcut() {

@@ -14,10 +14,11 @@ starts each new day paused.
 - **Add time on demand.** Choose **Add Minutes...**, enter any positive number of minutes, and the remaining time increases immediately. Additions can take the countdown above the configured daily budget and never change time spent.
 - **Time spent today.** The dropdown shows total spent time in whole minutes: running time plus manual subtractions. Manually added minutes are excluded, so adding time never lowers the spent figure. It can exceed the daily budget.
 - **Zero and streak stats.** The dropdown shows how many times the countdown has reached zero, the current daily streak, and the longest streak. A streak counts consecutive calendar days on which zero was reached at least once; reaching zero several times in one day does not extend it. A streak stays current through the day after the last zero and then expires if no new zero occurs. The longest streak is kept forever.
+- **Stats page.** Choose **Settings…** (**⌘,**) and open **Stats** to see overall time spent studying across every tracked day, plus today's total, lifetime times completed, the longest streak, and the number of days studied. The lifetime totals accumulate as you study and are kept across days and restarts.
 - **Tasks.** Choose **Tasks…** or press **⌘T** to open the task window. Add tasks, check them off to complete them, delete individual tasks, use **Delete Completed** to clear finished ones, or **Delete All** to remove every task after confirming. Completed tasks stay in the list until deleted. **Start** a task to track its minutes; **Stop** or completing it freezes the clock. Task time only advances while the study timer is running, and a task is paused when the app quits.
 - **Resets at midnight** to a full, paused budget. It also resets when the app notices the calendar day changed while running.
 - **Only counts while the Mac is awake and the app is running.** Sleep gaps and time with the app quit do not consume the budget.
-- **Persists across restarts.** The counted time and paused/running state are saved in `UserDefaults`, so relaunching within the same day picks up where you left off.
+- **Persists across restarts.** The counted time, paused/running state, and all-time study total are saved in `UserDefaults`, so relaunching within the same day picks up where you left off.
 - No Dock icon or app switcher entry; it lives only in the menu bar.
 - The timer never stops itself at zero. Negative time only appears after a full minute of overrun, and a paused overrun timer can be resumed.
 
