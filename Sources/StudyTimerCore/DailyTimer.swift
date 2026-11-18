@@ -10,6 +10,8 @@ public struct TimerSnapshot: Codable, Equatable {
     /// Seconds recorded as spent: running time plus manual subtractions.
     /// Additions never change this value.
     public var spent: TimeInterval
+    /// The daily budget in seconds that `counted` is measured against.
+    public var budget: TimeInterval
     /// Whether the timer was counting down when the snapshot was taken.
     public var isRunning: Bool
 
@@ -25,6 +27,7 @@ public struct TimerSnapshot: Codable, Equatable {
     public init(dayKey: String,
                 counted: TimeInterval,
                 spent: TimeInterval? = nil,
+                budget: TimeInterval = DailyTimer.dailyBudget,
                 isRunning: Bool,
                 timesReachedZero: Int = 0,
                 currentStreak: Int = 0,
@@ -33,6 +36,7 @@ public struct TimerSnapshot: Codable, Equatable {
         self.dayKey = dayKey
         self.counted = counted
         self.spent = spent ?? max(0, counted)
+        self.budget = budget
         self.isRunning = isRunning
         self.timesReachedZero = timesReachedZero
         self.currentStreak = currentStreak
@@ -41,12 +45,12 @@ public struct TimerSnapshot: Codable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case version, dayKey, counted, spent, isRunning
+        case version, dayKey, counted, spent, budget, isRunning
         case timesReachedZero, currentStreak, longestStreak, lastZeroDayKey
     }
 
-    /// Version 4 adds the zero-reached and streak statistics.
-    private static let currentSchemaVersion = 4
+    /// Version 5 makes the daily budget configurable.
+    private static let currentSchemaVersion = 5
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -56,6 +60,8 @@ public struct TimerSnapshot: Codable, Equatable {
 
         dayKey = try container.decode(String.self, forKey: .dayKey)
         counted = decodedCounted
+        budget = max(60, try container.decodeIfPresent(TimeInterval.self,
+                                                       forKey: .budget) ?? DailyTimer.dailyBudget)
         if version >= 3 {
             spent = max(0, decodedSpent ?? decodedCounted)
         } else {
@@ -79,6 +85,7 @@ public struct TimerSnapshot: Codable, Equatable {
         try container.encode(dayKey, forKey: .dayKey)
         try container.encode(counted, forKey: .counted)
         try container.encode(spent, forKey: .spent)
+        try container.encode(budget, forKey: .budget)
         try container.encode(isRunning, forKey: .isRunning)
         try container.encode(timesReachedZero, forKey: .timesReachedZero)
         try container.encode(currentStreak, forKey: .currentStreak)
@@ -94,7 +101,8 @@ public struct TimerSnapshot: Codable, Equatable {
 /// Day rollover happens at local midnight and always leaves the timer paused
 /// with a full budget.
 public struct DailyTimer {
-    /// Eight hours per day.
+    /// Eight hours per day by default. A snapshot can carry a different budget
+    /// after the user changes it in Settings.
     public static let dailyBudget: TimeInterval = 8 * 60 * 60
 
     /// Anything longer than this between ticks is treated as sleep or a gap and
@@ -104,6 +112,8 @@ public struct DailyTimer {
     public private(set) var counted: TimeInterval
     /// Time recorded as spent: running time plus manual subtractions.
     public private(set) var spent: TimeInterval
+    /// The budget in seconds that `counted` is measured against.
+    public private(set) var budget: TimeInterval
     public private(set) var isRunning: Bool
     public private(set) var dayKey: String
     /// Total number of times the countdown has crossed zero.
@@ -119,6 +129,7 @@ public struct DailyTimer {
         let key = DailyTimer.dayKey(for: now, calendar: calendar)
         self.dayKey = key
         self.lastTick = now
+        self.budget = max(60, snapshot?.budget ?? DailyTimer.dailyBudget)
 
         let restoredCurrentStreak = max(snapshot?.currentStreak ?? 0, 0)
         self.timesReachedZero = max(snapshot?.timesReachedZero ?? 0, 0)
@@ -143,7 +154,12 @@ public struct DailyTimer {
 
     /// Seconds left in today's budget. Negative once the timer has overrun.
     public var remaining: TimeInterval {
-        DailyTimer.dailyBudget - counted
+        budget - counted
+    }
+
+    /// The daily budget in whole minutes.
+    public var budgetMinutes: Int {
+        Int((max(60, budget) / 60).rounded())
     }
 
     public var isOverBudget: Bool {
@@ -248,6 +264,14 @@ public struct DailyTimer {
         lastTick = now
     }
 
+    /// Changes the daily budget without touching time already counted. Lowering
+    /// the budget can make the remaining time negative.
+    public mutating func setBudget(minutes: Int, now: Date) {
+        guard minutes > 0 else { return }
+        budget = TimeInterval(minutes) * 60
+        lastTick = now
+    }
+
     /// Adds time back to today's remaining budget. Additions do not count as
     /// time spent and can raise the remaining time above the daily budget.
     public mutating func add(minutes: Int, now: Date) {
@@ -286,6 +310,7 @@ public struct DailyTimer {
         TimerSnapshot(dayKey: dayKey,
                       counted: counted,
                       spent: spent,
+                      budget: budget,
                       isRunning: isRunning,
                       timesReachedZero: timesReachedZero,
                       currentStreak: currentStreak,

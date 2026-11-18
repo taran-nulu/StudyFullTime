@@ -778,6 +778,52 @@ private func testTaskSnapshotSurvivesJSONRoundTrip() {
     checkEqual(decoded, original, "task snapshot JSON round trip")
 }
 
+private func testChangingBudgetRecomputesRemaining() {
+    let now = date(2026, 1, 15, 9, 0)
+    var timer = DailyTimer(snapshot: nil, now: now, calendar: calendar)
+
+    checkEqual(timer.budgetMinutes, 480, "default budget minutes")
+    checkEqual(timer.displayText, "480m", "default display")
+
+    timer.setBudget(minutes: 60, now: now)
+    checkEqual(timer.budgetMinutes, 60, "smaller budget minutes")
+    checkEqual(timer.displayText, "60m", "smaller budget display")
+
+    timer.subtract(minutes: 10, now: now, calendar: calendar)
+    checkEqual(timer.displayText, "50m", "remaining after subtract")
+
+    timer.setBudget(minutes: 120, now: now)
+    checkEqual(timer.displayText, "110m", "remaining after raising budget")
+    checkEqual(timer.spentMinutes, 10, "budget change leaves spent alone")
+}
+
+private func testBudgetPersistsInSnapshot() {
+    let now = date(2026, 1, 15, 9, 0)
+    var timer = DailyTimer(snapshot: nil, now: now, calendar: calendar)
+    timer.setBudget(minutes: 90, now: now)
+
+    let data = try! JSONEncoder().encode(timer.snapshot())
+    let decoded = try! JSONDecoder().decode(TimerSnapshot.self, from: data)
+    let restored = DailyTimer(snapshot: decoded, now: now, calendar: calendar)
+
+    checkEqual(decoded.budget, 5400, accuracy: 0.001, "snapshot budget")
+    checkEqual(restored.budgetMinutes, 90, "restored budget minutes")
+    checkEqual(restored.displayText, "90m", "restored display")
+}
+
+private func testLegacySnapshotWithoutBudgetUsesDefault() {
+    let json = """
+    {"dayKey":"2026-01-15","version":4,"counted":600,"spent":600,"isRunning":false}
+    """.data(using: .utf8)!
+
+    let decoded = try! JSONDecoder().decode(TimerSnapshot.self, from: json)
+    let timer = DailyTimer(snapshot: decoded, now: date(2026, 1, 15, 9, 0),
+                           calendar: calendar)
+
+    checkEqual(timer.budgetMinutes, 480, "legacy budget defaults to 480")
+    checkEqual(timer.displayText, "470m", "legacy display uses default budget")
+}
+
 // MARK: - Runner
 
 testFreshDayStartsFullAndPaused()
@@ -828,6 +874,9 @@ testCompletedTaskCannotBeStarted()
 testTaskListLoadStopsRunningTasks()
 testTaskStoreRoundTrip()
 testTaskSnapshotSurvivesJSONRoundTrip()
+testChangingBudgetRecomputesRemaining()
+testBudgetPersistsInSnapshot()
+testLegacySnapshotWithoutBudgetUsesDefault()
 
 if failures == 0 {
     print("All \(checks) checks passed.")

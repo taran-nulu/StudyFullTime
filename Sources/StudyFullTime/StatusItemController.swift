@@ -6,6 +6,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var tasks: TaskList
     private let taskStore: TaskStateStore
     private var tasksWindowController: TasksWindowController?
+    private var settingsWindowController: SettingsWindowController?
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
@@ -26,6 +27,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let addItem = NSMenuItem(title: "Add Minutes...", action: nil, keyEquivalent: "")
     private let subtractItem = NSMenuItem(title: "Subtract Minutes...", action: nil, keyEquivalent: "")
     private let resetItem = NSMenuItem(title: "Reset Today's Timer", action: nil, keyEquivalent: "")
+    private let settingsItem = NSMenuItem(title: "Settings…", action: nil, keyEquivalent: "")
 
     private var ticker: Timer?
     private let globalHotKey = GlobalHotKey()
@@ -191,6 +193,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         shortcutItem.keyEquivalentModifierMask = [.control, .option]
         menu.addItem(shortcutItem)
 
+        settingsItem.target = self
+        settingsItem.action = #selector(showSettings)
+        settingsItem.keyEquivalent = ","
+        settingsItem.keyEquivalentModifierMask = .command
+        menu.addItem(settingsItem)
+
         let quitItem = NSMenuItem(title: "Quit StudyFullTime",
                                   action: #selector(quit),
                                   keyEquivalent: "q")
@@ -334,6 +342,21 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         tasksWindowController?.showWindow(nil)
         tasksWindowController?.window?.makeKeyAndOrderFront(nil)
         tasksWindowController?.refresh()
+    }
+
+    @objc private func showSettings() {
+        if settingsWindowController == nil {
+            let controller = SettingsWindowController()
+            controller.onSave = { [weak self] minutes in
+                guard let self = self else { return }
+                self.timer.setBudget(minutes: minutes, now: Date())
+                self.persist()
+                self.refresh()
+            }
+            settingsWindowController = controller
+        }
+
+        settingsWindowController?.present(budgetMinutes: timer.budgetMinutes)
     }
 
     @objc private func closeMenuShortcut() {
@@ -503,5 +526,9 @@ extension StatusItemController: TasksWindowControllerDelegate {
 
     func tasksWindowDidToggleTimer() {
         toggleTimer()
+    }
+
+    func tasksWindowDidRequestSettings() {
+        showSettings()
     }
 }
