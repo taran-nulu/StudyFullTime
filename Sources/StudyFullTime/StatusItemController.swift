@@ -306,7 +306,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         streakItem.title = "Streak: \(dayCount(timer.currentStreak))"
             + " · Longest: \(dayCount(timer.longestStreak))"
         if let running = tasks.runningTask {
-            tasksItem.title = "Tasks… — \(running.elapsedMinutes) min"
+            let name = running.title.count > 40
+                ? String(running.title.prefix(39)) + "…"
+                : running.title
+            let pausedSuffix = timer.isRunning ? "" : " (paused)"
+            tasksItem.title = "Tasks — \(name) · "
+                + "\(running.elapsedMinutes) min\(pausedSuffix)"
         } else {
             tasksItem.title = "Tasks…"
         }
