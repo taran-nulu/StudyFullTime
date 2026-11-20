@@ -362,9 +362,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     @objc private func showSettings() {
         if settingsWindowController == nil {
             let controller = SettingsWindowController()
-            controller.onSave = { [weak self] minutes in
+            controller.onSave = { [weak self] minutes, resetMinutes in
                 guard let self = self else { return }
-                self.timer.setBudget(minutes: minutes, now: Date())
+                let now = Date()
+                self.timer.setBudget(minutes: minutes, now: now)
+                self.timer.setResetTime(minutes: resetMinutes, now: now)
                 self.persist()
                 self.refresh()
             }
@@ -372,6 +374,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         }
 
         settingsWindowController?.present(budgetMinutes: timer.budgetMinutes,
+                                          resetMinutes: timer.resetMinutes,
                                           totalSpentMinutes: timer.lifetimeSpentMinutes,
                                           todaySpentMinutes: timer.spentMinutes,
                                           timesReachedZero: timer.timesReachedZero,

@@ -15,8 +15,9 @@ private final class SettingsWindow: NSWindow {
 
 /// A small window with General and Stats pages.
 final class SettingsWindowController: NSWindowController {
-    /// Called with the new budget in whole minutes when the user saves.
-    var onSave: ((Int) -> Void)?
+    /// Called with the new budget in whole minutes and the reset time in
+    /// minutes after midnight when the user saves.
+    var onSave: ((Int, Int) -> Void)?
 
     private let pageControl = NSSegmentedControl(labels: ["Stats", "General"],
                                                  trackingMode: .selectOne,
@@ -25,6 +26,7 @@ final class SettingsWindowController: NSWindowController {
     private let generalPage = NSStackView()
     private let statsPage = NSStackView()
     private let budgetField = NSTextField()
+    private let resetTimePicker = NSDatePicker()
     private let errorLabel = NSTextField(labelWithString: "")
     private let allTimeValue = NSTextField(labelWithString: "0 min")
     private let todayValue = NSTextField(labelWithString: "0 min")
@@ -51,12 +53,14 @@ final class SettingsWindowController: NSWindowController {
 
     /// Shows the window with the current budget and statistics filled in.
     func present(budgetMinutes: Int,
+                 resetMinutes: Int,
                  totalSpentMinutes: Int,
                  todaySpentMinutes: Int,
                  timesReachedZero: Int,
                  longestStreak: Int,
                  daysStudied: Int) {
         budgetField.stringValue = "\(budgetMinutes)"
+        resetTimePicker.dateValue = SettingsWindowController.pickerDate(minutes: resetMinutes)
         errorLabel.stringValue = ""
         updateStats(totalSpentMinutes: totalSpentMinutes,
                     todaySpentMinutes: todaySpentMinutes,
@@ -172,8 +176,21 @@ final class SettingsWindowController: NSWindowController {
         fieldRow.alignment = .centerY
         fieldRow.distribution = .fill
 
+        let resetLabel = NSTextField(labelWithString: "Daily reset time")
+        resetLabel.font = .systemFont(ofSize: NSFont.systemFontSize)
+
+        resetTimePicker.datePickerStyle = .textFieldAndStepper
+        resetTimePicker.datePickerElements = .hourMinute
+        resetTimePicker.setContentHuggingPriority(.required, for: .horizontal)
+
+        let resetRow = NSStackView(views: [resetLabel, resetTimePicker])
+        resetRow.orientation = .horizontal
+        resetRow.spacing = 12
+        resetRow.alignment = .centerY
+        resetRow.distribution = .fill
+
         let hintLabel = NSTextField(labelWithString:
-            "Applies to today and every new day. Time already counted is kept.")
+            "The day rolls over at the reset time. Changing the budget keeps time already counted.")
         hintLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         hintLabel.textColor = .secondaryLabelColor
         hintLabel.maximumNumberOfLines = 2
@@ -184,6 +201,7 @@ final class SettingsWindowController: NSWindowController {
         errorLabel.maximumNumberOfLines = 1
 
         generalPage.addArrangedSubview(fieldRow)
+        generalPage.addArrangedSubview(resetRow)
         generalPage.addArrangedSubview(hintLabel)
         generalPage.addArrangedSubview(errorLabel)
     }
@@ -257,12 +275,27 @@ final class SettingsWindowController: NSWindowController {
             return
         }
 
-        onSave?(minutes)
+        let components = Calendar.current.dateComponents([.hour, .minute],
+                                                         from: resetTimePicker.dateValue)
+        let resetMinutes = (components.hour ?? 0) * 60 + (components.minute ?? 0)
+
+        onSave?(minutes, resetMinutes)
         window?.performClose(nil)
     }
 
     @objc private func cancel() {
         window?.performClose(nil)
+    }
+
+    /// A stable reference date carrying the given wall-clock time.
+    private static func pickerDate(minutes: Int) -> Date {
+        var components = DateComponents()
+        components.year = 2001
+        components.month = 1
+        components.day = 1
+        components.hour = (minutes / 60) % 24
+        components.minute = minutes % 60
+        return Calendar.current.date(from: components) ?? Date()
     }
 
     /// Formats whole minutes as hours and minutes, e.g. `12h 34m` or `0h 34m`.

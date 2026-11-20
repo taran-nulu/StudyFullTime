@@ -14,6 +14,8 @@ public struct TimerSnapshot: Codable, Equatable {
     public var lifetimeSpent: TimeInterval
     /// The daily budget in seconds that `counted` is measured against.
     public var budget: TimeInterval
+    /// Minutes after local midnight when the study day rolls over.
+    public var resetMinutes: Int
     /// Whether the timer was counting down when the snapshot was taken.
     public var isRunning: Bool
 
@@ -33,6 +35,7 @@ public struct TimerSnapshot: Codable, Equatable {
                 spent: TimeInterval? = nil,
                 lifetimeSpent: TimeInterval? = nil,
                 budget: TimeInterval = DailyTimer.dailyBudget,
+                resetMinutes: Int = 0,
                 isRunning: Bool,
                 timesReachedZero: Int = 0,
                 currentStreak: Int = 0,
@@ -45,6 +48,7 @@ public struct TimerSnapshot: Codable, Equatable {
         self.spent = resolvedSpent
         self.lifetimeSpent = max(0, lifetimeSpent ?? resolvedSpent)
         self.budget = budget
+        self.resetMinutes = min(max(resetMinutes, 0), 1439)
         self.isRunning = isRunning
         self.timesReachedZero = timesReachedZero
         self.currentStreak = currentStreak
@@ -54,12 +58,12 @@ public struct TimerSnapshot: Codable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case version, dayKey, counted, spent, lifetimeSpent, budget, isRunning
+        case version, dayKey, counted, spent, lifetimeSpent, budget, resetMinutes, isRunning
         case timesReachedZero, currentStreak, longestStreak, lastZeroDayKey, daysStudied
     }
 
-    /// Version 7 adds the count of studied days.
-    private static let currentSchemaVersion = 7
+    /// Version 8 adds the configurable daily reset time.
+    private static let currentSchemaVersion = 8
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -83,6 +87,8 @@ public struct TimerSnapshot: Codable, Equatable {
                                 ?? resolvedSpent)
         budget = max(60, try container.decodeIfPresent(TimeInterval.self,
                                                        forKey: .budget) ?? DailyTimer.dailyBudget)
+        resetMinutes = min(max(try container.decodeIfPresent(Int.self,
+                                                             forKey: .resetMinutes) ?? 0, 0), 1439)
         isRunning = try container.decode(Bool.self, forKey: .isRunning)
         timesReachedZero = max(0, try container.decodeIfPresent(Int.self,
                                                                forKey: .timesReachedZero) ?? 0)
@@ -103,6 +109,7 @@ public struct TimerSnapshot: Codable, Equatable {
         try container.encode(spent, forKey: .spent)
         try container.encode(lifetimeSpent, forKey: .lifetimeSpent)
         try container.encode(budget, forKey: .budget)
+        try container.encode(resetMinutes, forKey: .resetMinutes)
         try container.encode(isRunning, forKey: .isRunning)
         try container.encode(timesReachedZero, forKey: .timesReachedZero)
         try container.encode(currentStreak, forKey: .currentStreak)
@@ -116,8 +123,8 @@ public struct TimerSnapshot: Codable, Equatable {
 ///
 /// Time only drains while the timer is running. The timer is allowed to run
 /// past the daily budget, in which case the remaining time goes negative.
-/// Day rollover happens at local midnight and always leaves the timer paused
-/// with a full budget.
+/// Day rollover happens at the configured reset time (midnight by default) and
+/// always leaves the timer paused with a full budget.
 public struct DailyTimer {
     /// Eight hours per day by default. A snapshot can carry a different budget
     /// after the user changes it in Settings.
@@ -136,6 +143,8 @@ public struct DailyTimer {
     public private(set) var completedStudyDays: Int
     /// The budget in seconds that `counted` is measured against.
     public private(set) var budget: TimeInterval
+    /// Minutes after local midnight when the study day rolls over.
+    public private(set) var resetMinutes: Int
     public private(set) var isRunning: Bool
     public private(set) var dayKey: String
     /// Total number of times the countdown has crossed zero.
@@ -147,11 +156,17 @@ public struct DailyTimer {
     private var lastZeroDayKey: String?
     private var lastTick: Date
 
-    public init(snapshot: TimerSnapshot?, now: Date, calendar: Calendar = .current) {
-        let key = DailyTimer.dayKey(for: now, calendar: calendar)
+    public init(snapshot: TimerSnapshot?,
+                now: Date,
+                calendar: Calendar = .current,
+                resetMinutes: Int? = nil) {
+        let effectiveReset = min(max(resetMinutes ?? snapshot?.resetMinutes ?? 0, 0), 1439)
+        let key = DailyTimer.dayKey(for: now, calendar: calendar,
+                                    resetMinutes: effectiveReset)
         self.dayKey = key
         self.lastTick = now
         self.budget = max(60, snapshot?.budget ?? DailyTimer.dailyBudget)
+        self.resetMinutes = effectiveReset
         self.lifetimeSpent = max(snapshot?.lifetimeSpent ?? 0, 0)
 
         let restoredStudyDays = max(snapshot?.daysStudied ?? 0, 0)
@@ -248,6 +263,24 @@ public struct DailyTimer {
                       components.day ?? 0)
     }
 
+    /// The study-day key for `date`, shifted by the configured reset time. A
+    /// reset at 1 AM keeps times between midnight and 1 AM on the previous day.
+    public static func dayKey(for date: Date,
+                              calendar: Calendar,
+                              resetMinutes: Int) -> String {
+        let clamped = min(max(resetMinutes, 0), 1439)
+        let shifted = date.addingTimeInterval(-TimeInterval(clamped) * 60)
+        return dayKey(for: shifted, calendar: calendar)
+    }
+
+    private func shiftedDate(for date: Date) -> Date {
+        date.addingTimeInterval(-TimeInterval(resetMinutes) * 60)
+    }
+
+    private func studyDayKey(for date: Date, calendar: Calendar) -> String {
+        DailyTimer.dayKey(for: shiftedDate(for: date), calendar: calendar)
+    }
+
     /// Advances the timer to `now`, counting a small delta if it is running.
     public mutating func tick(now: Date, calendar: Calendar = .current) {
         if handleDayChange(now: now, calendar: calendar) {
@@ -272,11 +305,11 @@ public struct DailyTimer {
         }
     }
 
-    /// Starts a fresh day if `now` falls on a different calendar day.
-    /// Returns `true` when the timer was reset.
+    /// Starts a fresh day if `now` falls past the configured reset time on a
+    /// different study day. Returns `true` when the timer was reset.
     @discardableResult
     public mutating func handleDayChange(now: Date, calendar: Calendar = .current) -> Bool {
-        let key = DailyTimer.dayKey(for: now, calendar: calendar)
+        let key = studyDayKey(for: now, calendar: calendar)
         guard key != dayKey else { return false }
 
         dayKey = key
@@ -306,7 +339,7 @@ public struct DailyTimer {
         counted = 0
         spent = 0
         isRunning = false
-        dayKey = DailyTimer.dayKey(for: now, calendar: calendar)
+        dayKey = studyDayKey(for: now, calendar: calendar)
         lastTick = now
     }
 
@@ -316,6 +349,32 @@ public struct DailyTimer {
         guard minutes > 0 else { return }
         budget = TimeInterval(minutes) * 60
         lastTick = now
+    }
+
+    /// Changes the reset time in minutes after midnight. Moving the boundary
+    /// earlier than the current time starts a fresh day; moving it later keeps
+    /// today's progress until the new boundary is reached.
+    public mutating func setResetTime(minutes: Int,
+                                      now: Date,
+                                      calendar: Calendar = .current) {
+        let normalized = ((minutes % 1440) + 1440) % 1440
+        resetMinutes = normalized
+
+        let key = studyDayKey(for: now, calendar: calendar)
+        if key > dayKey {
+            if spent > 0 {
+                completedStudyDays += 1
+            }
+            dayKey = key
+            counted = 0
+            spent = 0
+            isRunning = false
+            lastTick = now
+            expireStreakIfNeeded(now: now, calendar: calendar)
+        } else if key < dayKey {
+            dayKey = key
+            lastTick = now
+        }
     }
 
     /// Adds time back to today's remaining budget. Additions do not count as
@@ -359,6 +418,7 @@ public struct DailyTimer {
                       spent: spent,
                       lifetimeSpent: lifetimeSpent,
                       budget: budget,
+                      resetMinutes: resetMinutes,
                       isRunning: isRunning,
                       timesReachedZero: timesReachedZero,
                       currentStreak: currentStreak,
@@ -372,10 +432,11 @@ public struct DailyTimer {
     private mutating func recordZeroReached(now: Date, calendar: Calendar) {
         timesReachedZero += 1
 
-        let today = DailyTimer.dayKey(for: now, calendar: calendar)
+        let studyNow = shiftedDate(for: now)
+        let today = DailyTimer.dayKey(for: studyNow, calendar: calendar)
         guard lastZeroDayKey != today else { return }
 
-        let yesterdayDate = calendar.date(byAdding: .day, value: -1, to: now) ?? now
+        let yesterdayDate = calendar.date(byAdding: .day, value: -1, to: studyNow) ?? studyNow
         let yesterday = DailyTimer.dayKey(for: yesterdayDate, calendar: calendar)
 
         if lastZeroDayKey == yesterday {
@@ -396,8 +457,9 @@ public struct DailyTimer {
             return
         }
 
-        let today = DailyTimer.dayKey(for: now, calendar: calendar)
-        let yesterdayDate = calendar.date(byAdding: .day, value: -1, to: now) ?? now
+        let studyNow = shiftedDate(for: now)
+        let today = DailyTimer.dayKey(for: studyNow, calendar: calendar)
+        let yesterdayDate = calendar.date(byAdding: .day, value: -1, to: studyNow) ?? studyNow
         let yesterday = DailyTimer.dayKey(for: yesterdayDate, calendar: calendar)
 
         if lastZeroDayKey != today && lastZeroDayKey != yesterday {

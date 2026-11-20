@@ -938,6 +938,95 @@ private func testDaysStudiedPersistsInSnapshot() {
     checkEqual(decoded.daysStudied, 12, "days studied snapshot round trip")
 }
 
+private func testResetTimeDefersRolloverUntilConfiguredHour() {
+    let dayOne = date(2026, 1, 15, 23, 50)
+    var timer = DailyTimer(snapshot: nil, now: dayOne, calendar: calendar,
+                           resetMinutes: 60)
+    timer.subtract(minutes: 5, now: dayOne, calendar: calendar)
+
+    timer.tick(now: date(2026, 1, 16, 0, 30), calendar: calendar)
+
+    checkEqual(timer.dayKey, "2026-01-15", "day key before reset time")
+    checkEqual(timer.spentMinutes, 5, "spent kept before reset time")
+
+    timer.tick(now: date(2026, 1, 16, 1, 0), calendar: calendar)
+
+    checkEqual(timer.dayKey, "2026-01-16", "day key at reset time")
+    checkEqual(timer.spent, 0, accuracy: 0.001, "spent resets at reset time")
+    checkEqual(timer.displayText, "480m", "budget refills at reset time")
+    check(!timer.isRunning, "reset time leaves the timer paused")
+}
+
+private func testStreakSurvivesPastMidnightUntilResetTime() {
+    let saved = TimerSnapshot(dayKey: "2026-01-15",
+                              counted: 600,
+                              spent: 600,
+                              lifetimeSpent: 600,
+                              resetMinutes: 60,
+                              isRunning: false,
+                              timesReachedZero: 1,
+                              currentStreak: 1,
+                              longestStreak: 1,
+                              lastZeroDayKey: "2026-01-15")
+
+    var timer = DailyTimer(snapshot: saved,
+                           now: date(2026, 1, 16, 0, 30),
+                           calendar: calendar)
+
+    checkEqual(timer.currentStreak, 1, "streak kept before reset time")
+
+    timer.tick(now: date(2026, 1, 16, 1, 0), calendar: calendar)
+    checkEqual(timer.currentStreak, 1, "streak kept at reset time")
+
+    timer.tick(now: date(2026, 1, 17, 1, 0), calendar: calendar)
+    checkEqual(timer.currentStreak, 0, "streak expires after the next reset day")
+    checkEqual(timer.longestStreak, 1, "longest streak is kept")
+}
+
+private func testResetTimePersistsInSnapshot() {
+    let original = TimerSnapshot(dayKey: "2026-01-15", counted: 120, spent: 120,
+                                 resetMinutes: 75, isRunning: false)
+    let data = try! JSONEncoder().encode(original)
+    let decoded = try! JSONDecoder().decode(TimerSnapshot.self, from: data)
+    let timer = DailyTimer(snapshot: decoded,
+                           now: date(2026, 1, 15, 9, 0),
+                           calendar: calendar)
+
+    checkEqual(decoded.resetMinutes, 75, "reset minutes snapshot round trip")
+    checkEqual(timer.resetMinutes, 75, "restored reset minutes")
+}
+
+private func testChangingResetTimeLaterKeepsProgress() {
+    let now = date(2026, 1, 16, 0, 30)
+    var timer = DailyTimer(snapshot: nil, now: now, calendar: calendar)
+    timer.subtract(minutes: 10, now: now, calendar: calendar)
+
+    timer.setResetTime(minutes: 60, now: now, calendar: calendar)
+
+    checkEqual(timer.resetMinutes, 60, "reset time changed")
+    checkEqual(timer.dayKey, "2026-01-15", "study day moves back before new reset")
+    checkEqual(timer.spentMinutes, 10, "progress kept when reset moves later")
+
+    timer.tick(now: date(2026, 1, 16, 1, 0), calendar: calendar)
+    checkEqual(timer.dayKey, "2026-01-16", "new reset time triggers rollover")
+    checkEqual(timer.spent, 0, accuracy: 0.001, "progress cleared at new reset")
+}
+
+private func testChangingResetTimeEarlierStartsNewDay() {
+    let now = date(2026, 1, 16, 0, 30)
+    var timer = DailyTimer(snapshot: nil, now: now, calendar: calendar,
+                           resetMinutes: 60)
+    timer.subtract(minutes: 10, now: now, calendar: calendar)
+
+    timer.setResetTime(minutes: 0, now: now, calendar: calendar)
+
+    checkEqual(timer.resetMinutes, 0, "reset time changed to midnight")
+    checkEqual(timer.dayKey, "2026-01-16", "new day starts immediately")
+    checkEqual(timer.spent, 0, accuracy: 0.001, "progress cleared for the new day")
+    check(!timer.isRunning, "new day leaves the timer paused")
+    checkEqual(timer.daysStudied, 1, "previous day counted when reset moves earlier")
+}
+
 // MARK: - Runner
 
 testFreshDayStartsFullAndPaused()
@@ -1000,6 +1089,11 @@ testLegacySnapshotWithoutLifetimeUsesTodaySpent()
 testDaysStudiedCountsTodayAndRollsOver()
 testDaysStudiedCountsPreviousDayOnLaunch()
 testDaysStudiedPersistsInSnapshot()
+testResetTimeDefersRolloverUntilConfiguredHour()
+testStreakSurvivesPastMidnightUntilResetTime()
+testResetTimePersistsInSnapshot()
+testChangingResetTimeLaterKeepsProgress()
+testChangingResetTimeEarlierStartsNewDay()
 
 if failures == 0 {
     print("All \(checks) checks passed.")

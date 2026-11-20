@@ -3,12 +3,12 @@
 A macOS menu bar timer for a configurable daily study budget (8 hours by default).
 
 The status bar always shows the remaining time in whole minutes, e.g. `480m`.
-Click it for pause/resume controls. The timer refills at local midnight and
-starts each new day paused.
+Click it for pause/resume controls. The timer refills at the configured daily
+reset time (midnight by default) and starts each new day paused.
 
 ## Behavior
 
-- **8 hours per day by default.** The countdown shows minutes only (`480m` → `479m` → … → `0m`), rounded up. If the timer keeps running past the budget, it goes negative (`-1m`, `-2m`, …). Choose **Settings…** (**⌘,**) to change the daily budget; time already counted is kept, and the new budget applies to today and future days.
+- **8 hours per day by default.** The countdown shows minutes only (`480m` → `479m` → … → `0m`), rounded up. If the timer keeps running past the budget, it goes negative (`-1m`, `-2m`, …). Choose **Settings…** (**⌘,**) to change the daily budget and reset time; time already counted is kept, and the new settings apply to today and future days.
 - **Pause / resume** from the dropdown menu, or reset today's timer back to `480m`. The menu bar icon changes with the state: an hourglass while running and `moon.zzz` while paused.
 - **Subtract time on demand.** Choose **Subtract Minutes...**, enter any positive number of minutes, and that time is marked as used. Subtracting more than what remains can also push the countdown negative.
 - **Add time on demand.** Choose **Add Minutes...**, enter any positive number of minutes, and the remaining time increases immediately. Additions can take the countdown above the configured daily budget and never change time spent.
@@ -16,7 +16,7 @@ starts each new day paused.
 - **Zero and streak stats.** The dropdown shows how many times the countdown has reached zero, the current daily streak, and the longest streak. A streak counts consecutive calendar days on which zero was reached at least once; reaching zero several times in one day does not extend it. A streak stays current through the day after the last zero and then expires if no new zero occurs. The longest streak is kept forever.
 - **Stats page.** Choose **Settings…** (**⌘,**) and open **Stats** to see overall time spent studying across every tracked day, plus today's total, lifetime times completed, the longest streak, and the number of days studied. The lifetime totals accumulate as you study and are kept across days and restarts.
 - **Tasks.** Choose **Tasks…** or press **⌘T** to open the task window. Add tasks, check them off to complete them, delete individual tasks, use **Delete Completed** to clear finished ones, or **Delete All** to remove every task after confirming. Completed tasks stay in the list until deleted. **Start** a task to track its minutes; **Stop** or completing it freezes the clock. While a task is running, the **Tasks…** row shows its name and tracked minutes. Task time only advances while the study timer is running, and a task is paused when the app quits.
-- **Resets at midnight** to a full, paused budget. It also resets when the app notices the calendar day changed while running.
+- **Resets at midnight by default.** The daily reset time can be changed in **Settings…** (for example, to 1 AM). The timer refills then and starts paused; a running timer is stopped. Streaks stay current until the day after the last zero, measured from the configured reset time, so a late-night session still counts toward the same day.
 - **Only counts while the Mac is awake and the app is running.** Sleep gaps and time with the app quit do not consume the budget.
 - **Persists across restarts.** The counted time, paused/running state, and all-time study total are saved in `UserDefaults`, so relaunching within the same day picks up where you left off.
 - No Dock icon or app switcher entry; it lives only in the menu bar.
