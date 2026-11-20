@@ -6,8 +6,8 @@ import Foundation
 ///
 /// `NSEvent` local monitors and Carbon hotkey events are not delivered while a
 /// menu is open, but a raw key event handler installed on the application
-/// event target still is. Used to close the status menu with the same shortcut
-/// that opens it.
+/// event target still is. Used to handle the status menu's keyboard shortcuts
+/// while it is open.
 final class CarbonKeyMonitor {
     private var eventHandler: EventHandlerRef?
     private let handler: (NSEvent) -> Bool

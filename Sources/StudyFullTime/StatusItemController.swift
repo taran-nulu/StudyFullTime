@@ -32,15 +32,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var ticker: Timer?
     private let globalHotKey = GlobalHotKey()
     private lazy var menuShortcutMonitor = MenuShortcutMonitor(
-        matches: { event in
-            let flags = event.modifierFlags
-                .intersection(.deviceIndependentFlagsMask)
-                .subtracting([.capsLock, .numericPad])
-            return event.keyCode == UInt16(GlobalHotKey.controlOptionMKeyCode)
-                && flags == [.control, .option]
-        },
-        action: { [weak self] in
-            self?.menu.cancelTracking()
+        menu: menu,
+        perform: { [weak self] item in
+            self?.performMenuShortcut(item)
         })
     private var lastTitle = ""
     private var lastSymbolName: String?
@@ -382,6 +376,18 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                                           daysStudied: timer.daysStudied)
     }
 
+    /// Runs a menu item chosen with its keyboard shortcut while the menu is
+    /// tracking. Tracking is cancelled first, and the action is deferred until
+    /// the tracking loop has unwound so it can open windows or modal alerts.
+    private func performMenuShortcut(_ item: NSMenuItem) {
+        menu.cancelTracking()
+
+        guard let action = item.action else { return }
+        DispatchQueue.main.async {
+            NSApp.sendAction(action, to: item.target, from: item)
+        }
+    }
+
     @objc private func closeMenuShortcut() {
         statusItem.menu?.cancelTracking()
     }
@@ -479,8 +485,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         isMenuOpen = true
-        // Carbon hotkeys are not delivered while the menu tracks, so hand the
-        // shortcut over to a raw key monitor until the menu closes.
+        // Carbon hotkeys are not delivered while the menu tracks, and an
+        // inactive accessory app does not get AppKit's key-equivalent
+        // handling, so hand all shortcut matching to a raw key monitor until
+        // the menu closes.
         globalHotKey.suspend()
         menuShortcutMonitor.start()
         refresh()

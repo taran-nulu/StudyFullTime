@@ -36,6 +36,9 @@ While the dropdown menu is open:
 | Settings | ⌘, |
 | Quit | ⌘Q |
 
+These shortcuts work even when the menu was opened with **⌃⌥M** while
+another app is active.
+
 While the Tasks window is focused, **⌘P** pauses or resumes the study timer, **⌘,** opens Settings, and **⌘W** closes the window.
 
 From any app: **⌃⌥M** opens the StudyFullTime menu without clicking the icon, and pressing it again closes the menu. It uses a system-wide hotkey, so no Accessibility permission is required.

@@ -1,24 +1,26 @@
 import AppKit
 import Foundation
 
-/// Watches for a shortcut while an `NSMenu` is tracking.
+/// Watches for the menu's keyboard shortcuts while an `NSMenu` is tracking.
 ///
-/// Menu tracking runs its own event loop and consumes key events before the
-/// menu's normal key-equivalent handling. A raw Carbon key handler still
-/// receives those events, and returning `eventNotHandledErr` for keys it does
-/// not match lets them reach the menu unchanged. An `NSEvent` local monitor is
-/// kept as a fallback on newer systems.
+/// Menu tracking runs its own event loop, and an inactive `LSUIElement` app does
+/// not receive AppKit's normal key-equivalent handling. A raw Carbon key handler
+/// still receives those events; matching them against the tracked menu's own key
+/// equivalents lets the shortcuts work regardless of which app was active.
+/// Returning `eventNotHandledErr` for keys it does not match lets arrows, Return,
+/// Escape, and type-to-select reach the menu unchanged. An `NSEvent` local
+/// monitor is kept as a fallback on newer systems.
 final class MenuShortcutMonitor {
-    private let matches: (NSEvent) -> Bool
-    private let action: () -> Void
+    private let menu: NSMenu
+    private let perform: (NSMenuItem) -> Void
 
     private var appKitMonitor: AnyObject?
     private var carbonMonitor: CarbonKeyMonitor?
     private var isStarted = false
 
-    init(matches: @escaping (NSEvent) -> Bool, action: @escaping () -> Void) {
-        self.matches = matches
-        self.action = action
+    init(menu: NSMenu, perform: @escaping (NSMenuItem) -> Void) {
+        self.menu = menu
+        self.perform = perform
     }
 
     deinit {
@@ -30,8 +32,11 @@ final class MenuShortcutMonitor {
         isStarted = true
 
         let monitor = CarbonKeyMonitor { [weak self] event in
-            guard let self = self, self.matches(event) else { return false }
-            self.action()
+            guard let self = self,
+                  let item = self.matchingItem(for: event) else {
+                return false
+            }
+            self.perform(item)
             return true
         }
         monitor.start()
@@ -39,8 +44,11 @@ final class MenuShortcutMonitor {
 
         if #available(macOS 14.0, *) {
             appKitMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
-                guard let self = self, self.matches(event) else { return event }
-                self.action()
+                guard let self = self,
+                      let item = self.matchingItem(for: event) else {
+                    return event
+                }
+                self.perform(item)
                 return nil
             } as AnyObject
         }
@@ -57,5 +65,35 @@ final class MenuShortcutMonitor {
 
         carbonMonitor?.stop()
         carbonMonitor = nil
+    }
+
+    /// Finds the menu item whose shortcut matches `event`, if any.
+    private func matchingItem(for event: NSEvent) -> NSMenuItem? {
+        guard event.type == .keyDown,
+              let characters = event.charactersIgnoringModifiers,
+              !characters.isEmpty else {
+            return nil
+        }
+
+        let flags = normalizedModifiers(event.modifierFlags)
+
+        return menu.items.first { item in
+            guard !item.isSeparatorItem,
+                  item.action != nil,
+                  item.isEnabled,
+                  !item.keyEquivalent.isEmpty else {
+                return false
+            }
+            guard normalizedModifiers(item.keyEquivalentModifierMask) == flags else {
+                return false
+            }
+            return item.keyEquivalent.compare(characters,
+                                              options: .caseInsensitive) == .orderedSame
+        }
+    }
+
+    private func normalizedModifiers(_ flags: NSEvent.ModifierFlags) -> NSEvent.ModifierFlags {
+        flags.intersection(.deviceIndependentFlagsMask)
+            .subtracting([.capsLock, .numericPad])
     }
 }
